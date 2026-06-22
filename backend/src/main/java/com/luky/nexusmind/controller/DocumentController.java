@@ -204,10 +204,7 @@ public class DocumentController {
     }
 
     private List<Map<String, Object>> toFileDtos(List<FileUpload> files, String currentUserId) {
-        Map<String, FileProcessingStatus> processingStatusMap = processingStatusService.findLatestByFileMd5(
-                files.stream().map(FileUpload::getFileMd5).collect(Collectors.toSet()),
-                currentUserId
-        );
+        Map<String, FileProcessingStatus> processingStatusMap = findProcessingStatusesForFiles(files, currentUserId);
 
         return files.stream().map(file -> {
             Map<String, Object> dto = new HashMap<>();
@@ -231,6 +228,27 @@ public class DocumentController {
             dto.put("orgTagName", getOrgTagName(file.getOrgTag()));
             return dto;
         }).collect(Collectors.toList());
+    }
+
+    private Map<String, FileProcessingStatus> findProcessingStatusesForFiles(List<FileUpload> files, String currentUserId) {
+        Map<String, List<FileUpload>> filesByOwner = files.stream()
+                .collect(Collectors.groupingBy(file -> resolveProcessingStatusOwner(file, currentUserId)));
+
+        Map<String, FileProcessingStatus> processingStatusMap = new HashMap<>();
+        filesByOwner.forEach((ownerUserId, ownerFiles) -> processingStatusMap.putAll(
+                processingStatusService.findLatestByFileMd5(
+                        ownerFiles.stream().map(FileUpload::getFileMd5).collect(Collectors.toSet()),
+                        ownerUserId
+                )
+        ));
+        return processingStatusMap;
+    }
+
+    private String resolveProcessingStatusOwner(FileUpload file, String currentUserId) {
+        if (file.getUserId() != null && !file.getUserId().isBlank()) {
+            return file.getUserId();
+        }
+        return currentUserId;
     }
 
     private void fillLegacyProcessingStatus(Map<String, Object> dto, FileUpload file) {
