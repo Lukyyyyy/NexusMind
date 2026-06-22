@@ -52,6 +52,9 @@ public class FileProcessingStatus {
     @Column(name = "parsed_chunk_count")
     private Integer parsedChunkCount = 0;
 
+    @Column(name = "chunk_size")
+    private Integer chunkSize;
+
     @Column(name = "vectorized_count")
     private Integer vectorizedCount = 0;
 

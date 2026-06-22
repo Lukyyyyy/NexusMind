@@ -1,5 +1,12 @@
 <script setup lang="ts">
-import { parseEngineOptions, uploadAccept } from '@/constants/common';
+import {
+  defaultTextChunkSize,
+  parseEngineOptions,
+  textChunkSizeMax,
+  textChunkSizeMin,
+  textChunkSizeOptions,
+  uploadAccept
+} from '@/constants/common';
 
 defineOptions({
   name: 'UploadDialog'
@@ -21,6 +28,7 @@ function createDefaultModel(): Api.KnowledgeBase.Form {
     orgTagName: '',
     isPublic: false,
     parseEngine: 'AUTO',
+    chunkSize: defaultTextChunkSize,
     fileList: []
   };
 }
@@ -29,6 +37,7 @@ const rules = ref<FormRules>({
   orgTag: defaultRequiredRule,
   isPublic: defaultRequiredRule,
   parseEngine: defaultRequiredRule,
+  chunkSize: defaultRequiredRule,
   fileList: defaultRequiredRule
 });
 
@@ -99,7 +108,25 @@ function onUpdate(option: unknown) {
           </NSpace>
         </NRadioGroup>
       </NFormItem>
-      <NFormItem label="标签描述" path="fileList">
+      <NFormItem label="切片大小" path="chunkSize">
+        <NSpace vertical :size="10">
+          <NRadioGroup v-model:value="model.chunkSize" name="chunkSizePreset">
+            <NSpace :size="8">
+              <NRadioButton v-for="option in textChunkSizeOptions" :key="option.value" :value="option.value">
+                {{ option.label }} {{ option.value }}
+              </NRadioButton>
+            </NSpace>
+          </NRadioGroup>
+          <NInputNumber
+            v-model:value="model.chunkSize"
+            :min="textChunkSizeMin"
+            :max="textChunkSizeMax"
+            :step="128"
+            class="w-180px"
+          />
+        </NSpace>
+      </NFormItem>
+      <NFormItem label="文件内容" path="fileList">
         <NUpload
           v-model:file-list="model.fileList"
           :accept="uploadAccept"

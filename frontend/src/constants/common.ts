@@ -14,6 +14,18 @@ export const enableStatusOptions = [
 
 export const chunkSize = 5 * 1024 * 1024;
 
+export const textChunkSizeMin = 256;
+
+export const textChunkSizeMax = 4096;
+
+export const defaultTextChunkSize = 512;
+
+export const textChunkSizeOptions = [
+  { label: '精细', value: 256 },
+  { label: '标准', value: 512 },
+  { label: '长上下文', value: 1024 }
+];
+
 export const uploadAccept = '.pdf,.doc,.docx,.txt';
 
 export const parseEngineOptions = [

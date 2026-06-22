@@ -42,6 +42,12 @@ public class ParseService {
     @Value("${file.parsing.chunk-size}")
     private int chunkSize;
 
+    @Value("${file.parsing.min-chunk-size:256}")
+    private int minChunkSize;
+
+    @Value("${file.parsing.max-chunk-size:4096}")
+    private int maxChunkSize;
+
     @Value("${file.parsing.parent-chunk-size:1048576}")
     private int parentChunkSize;
     
@@ -77,29 +83,35 @@ public class ParseService {
 
     public int parseAndSave(String fileMd5, InputStream fileStream,
             String userId, String orgTag, boolean isPublic, ParseEngine requestedEngine, String fileName) throws IOException, TikaException {
+        return parseAndSave(fileMd5, fileStream, userId, orgTag, isPublic, requestedEngine, fileName, null);
+    }
+
+    public int parseAndSave(String fileMd5, InputStream fileStream,
+            String userId, String orgTag, boolean isPublic, ParseEngine requestedEngine, String fileName, Integer requestedChunkSize) throws IOException, TikaException {
+        int effectiveChunkSize = resolveChunkSize(requestedChunkSize);
         ParseEngine engine = resolveEngine(requestedEngine, fileName);
         if (engine == ParseEngine.MINERU) {
-            return parseWithMinerUAndSave(fileMd5, fileStream, userId, orgTag, isPublic, requestedEngine, fileName);
+            return parseWithMinerUAndSave(fileMd5, fileStream, userId, orgTag, isPublic, requestedEngine, fileName, effectiveChunkSize);
         }
-        return parseWithTikaAndSave(fileMd5, fileStream, userId, orgTag, isPublic);
+        return parseWithTikaAndSave(fileMd5, fileStream, userId, orgTag, isPublic, effectiveChunkSize);
     }
 
     private int parseWithTikaAndSave(String fileMd5, InputStream fileStream,
-            String userId, String orgTag, boolean isPublic) throws IOException, TikaException {
+            String userId, String orgTag, boolean isPublic, int effectiveChunkSize) throws IOException, TikaException {
         logger.info("开始流式解析文件，fileMd5: {}, userId: {}, orgTag: {}, isPublic: {}",
                 fileMd5, userId, orgTag, isPublic);
 
         AiTraceService.TraceSpan span = aiTraceService.startFileSpan("file.parse.tika", userId, fileMd5, null)
                 .attribute("nexusmind.org_tag", orgTag)
                 .attribute("nexusmind.upload.is_public", isPublic)
-                .attribute("nexusmind.parse.chunk_size", chunkSize)
+                .attribute("nexusmind.parse.chunk_size", effectiveChunkSize)
                 .attribute("nexusmind.parse.parent_chunk_size", parentChunkSize);
         try {
         documentVectorRepository.deleteByFileMd5(fileMd5);
         checkMemoryThreshold();
         try (BufferedInputStream bufferedStream = new BufferedInputStream(fileStream, bufferSize)) {
             // 创建一个流式处理器，它会在内部处理父块的切分和子块的保存
-            StreamingContentHandler handler = new StreamingContentHandler(fileMd5, userId, orgTag, isPublic);
+            StreamingContentHandler handler = new StreamingContentHandler(fileMd5, userId, orgTag, isPublic, effectiveChunkSize);
             Metadata metadata = new Metadata();
             ParseContext context = new ParseContext();
             AutoDetectParser parser = new AutoDetectParser();
@@ -128,7 +140,7 @@ public class ParseService {
     }
 
     private int parseWithMinerUAndSave(String fileMd5, InputStream fileStream,
-            String userId, String orgTag, boolean isPublic, ParseEngine requestedEngine, String fileName) throws IOException, TikaException {
+            String userId, String orgTag, boolean isPublic, ParseEngine requestedEngine, String fileName, int effectiveChunkSize) throws IOException, TikaException {
         logger.info("开始使用MinerU解析文件，fileMd5: {}, fileName: {}, userId: {}, orgTag: {}, isPublic: {}",
                 fileMd5, fileName, userId, orgTag, isPublic);
 
@@ -136,7 +148,7 @@ public class ParseService {
         AiTraceService.TraceSpan span = aiTraceService.startFileSpan("file.parse.mineru", userId, fileMd5, fileName)
                 .attribute("nexusmind.org_tag", orgTag)
                 .attribute("nexusmind.upload.is_public", isPublic)
-                .attribute("nexusmind.parse.chunk_size", chunkSize)
+                .attribute("nexusmind.parse.chunk_size", effectiveChunkSize)
                 .attribute("nexusmind.parse.parent_chunk_size", parentChunkSize)
                 .attribute("nexusmind.parse.requested_engine", requestedEngine != null ? requestedEngine.name() : ParseEngine.AUTO.name());
         try {
@@ -144,7 +156,7 @@ public class ParseService {
             checkMemoryThreshold();
 
             String parsedMarkdown = minerUParseClient.parseToText(fileBytes, fileName);
-            int savedChunks = saveParsedMarkdown(fileMd5, parsedMarkdown, userId, orgTag, isPublic);
+            int savedChunks = saveParsedMarkdown(fileMd5, parsedMarkdown, userId, orgTag, isPublic, effectiveChunkSize);
             span.attribute("nexusmind.parse.saved_chunks", savedChunks)
                     .attribute("nexusmind.parse.engine", ParseEngine.MINERU.name());
             processingStatusService.markActualParseEngine(fileMd5, userId, ParseEngine.MINERU);
@@ -155,7 +167,7 @@ public class ParseService {
             if (shouldFallbackMinerUToTika(requestedEngine)) {
                 logger.warn("MinerU解析失败，AUTO策略将回退到Tika，fileMd5: {}, fileName: {}, reason: {}",
                         fileMd5, fileName, e.getMessage());
-                return parseWithTikaAndSave(fileMd5, new ByteArrayInputStream(fileBytes), userId, orgTag, isPublic);
+                return parseWithTikaAndSave(fileMd5, new ByteArrayInputStream(fileBytes), userId, orgTag, isPublic, effectiveChunkSize);
             }
             if (e instanceof IOException ioException) {
                 throw ioException;
@@ -173,6 +185,16 @@ public class ParseService {
         }
         ParseEngine engine = requestedEngine == null ? ParseEngine.AUTO : requestedEngine;
         return engine == ParseEngine.AUTO;
+    }
+
+    private int resolveChunkSize(Integer requestedChunkSize) {
+        if (requestedChunkSize == null) {
+            return chunkSize;
+        }
+        if (requestedChunkSize < minChunkSize || requestedChunkSize > maxChunkSize) {
+            throw new IllegalArgumentException("chunkSize must be between " + minChunkSize + " and " + maxChunkSize);
+        }
+        return requestedChunkSize;
     }
 
     private ParseEngine resolveEngine(ParseEngine requestedEngine, String fileName) {
@@ -256,14 +278,16 @@ public class ParseService {
         private final String userId;
         private final String orgTag;
         private final boolean isPublic;
+        private final int effectiveChunkSize;
         private int savedChunkCount = 0;
 
-        public StreamingContentHandler(String fileMd5, String userId, String orgTag, boolean isPublic) {
+        public StreamingContentHandler(String fileMd5, String userId, String orgTag, boolean isPublic, int effectiveChunkSize) {
             super(-1); // 禁用Tika的内部写入限制，我们自己管理缓冲区
             this.fileMd5 = fileMd5;
             this.userId = userId;
             this.orgTag = orgTag;
             this.isPublic = isPublic;
+            this.effectiveChunkSize = effectiveChunkSize;
         }
 
         @Override
@@ -287,7 +311,7 @@ public class ParseService {
             logger.debug("处理父文本块，大小: {} bytes", parentChunkText.length());
 
             // 1. 将父块分割成更小的、有语义的子切片
-            List<String> childChunks = ParseService.this.splitTextIntoChunksWithSemantics(parentChunkText, chunkSize);
+            List<String> childChunks = ParseService.this.splitTextIntoChunksWithSemantics(parentChunkText, effectiveChunkSize);
 
             // 2. 将子切片批量保存到数据库
             this.savedChunkCount = ParseService.this.saveChildChunks(fileMd5, childChunks, userId, orgTag,
@@ -350,8 +374,8 @@ public class ParseService {
         return currentChunkId;
     }
 
-    private int saveParsedMarkdown(String fileMd5, String parsedText, String userId, String orgTag, boolean isPublic) {
-        List<String> chunks = splitMarkdownIntoChunks(parsedText == null ? "" : parsedText, chunkSize);
+    private int saveParsedMarkdown(String fileMd5, String parsedText, String userId, String orgTag, boolean isPublic, int effectiveChunkSize) {
+        List<String> chunks = splitMarkdownIntoChunks(parsedText == null ? "" : parsedText, effectiveChunkSize);
         return saveChildChunks(fileMd5, chunks, userId, orgTag, isPublic, DocumentContentFormat.MARKDOWN, 0);
     }
 

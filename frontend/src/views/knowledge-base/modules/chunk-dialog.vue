@@ -28,6 +28,7 @@ const pagination = reactive<PaginationProps>({
 });
 
 const actualParseEngine = computed(() => chunkPage.value?.actualParseEngine ?? props.actualParseEngine ?? null);
+const actualChunkSize = computed(() => chunkPage.value?.actualChunkSize ?? chunkPage.value?.configuredChunkSize ?? null);
 const isSelectedMarkdown = computed(() => selectedChunk.value?.contentFormat === 'MARKDOWN');
 
 const columns: DataTableColumns<Api.KnowledgeBase.DocumentChunk> = [
@@ -183,7 +184,7 @@ watch(visible, show => {
       <div class="flex flex-wrap items-center justify-between gap-12px">
         <NSpace size="small">
           <NTag type="info">总切片：{{ chunkPage?.totalChunks ?? 0 }}</NTag>
-          <NTag>chunkSize：{{ chunkPage?.configuredChunkSize ?? '-' }}</NTag>
+          <NTag>切片大小：{{ actualChunkSize ?? '-' }}</NTag>
           <NTag :type="parseEngineTagType(actualParseEngine)">解析：{{ formatParseEngine(actualParseEngine) }}</NTag>
         </NSpace>
         <NSpace size="small">

@@ -131,6 +131,7 @@ declare namespace Api {
       orgTagName: string | null;
       isPublic: boolean;
       parseEngine: 'AUTO' | 'TIKA' | 'MINERU';
+      chunkSize: number;
       fileList: import('naive-ui').UploadFileInfo[];
     }
 
@@ -148,6 +149,8 @@ declare namespace Api {
       isPublic: boolean;
       parseEngine: 'AUTO' | 'TIKA' | 'MINERU';
       actualParseEngine?: 'AUTO' | 'TIKA' | 'MINERU' | null;
+      chunkSize?: number;
+      actualChunkSize?: number | null;
       processingStage?: 'QUEUED' | 'PARSING' | 'CHUNKING' | 'VECTORIZING' | 'INDEXING' | 'COMPLETED' | 'FAILED';
       processingState?: 'PENDING' | 'RUNNING' | 'SUCCEEDED' | 'FAILED';
       processingMessage?: string | null;
@@ -190,6 +193,7 @@ declare namespace Api {
         processingError?: string | null;
         parseEngine?: UploadTask['parseEngine'];
         actualParseEngine?: UploadTask['actualParseEngine'];
+        actualChunkSize?: number | null;
         parsedChunkCount?: number;
         vectorizedCount?: number;
         processingDurationMillis?: number | null;
@@ -212,6 +216,7 @@ declare namespace Api {
       contentLength: number;
       byteSize: number;
       configuredChunkSize: number;
+      actualChunkSize?: number | null;
       contentFormat?: 'PLAIN_TEXT' | 'MARKDOWN';
       actualParseEngine?: UploadTask['actualParseEngine'];
       modelVersion?: string | null;
@@ -221,6 +226,7 @@ declare namespace Api {
       fileMd5: string;
       fileName: string;
       configuredChunkSize: number;
+      actualChunkSize?: number | null;
       contentFormat?: 'PLAIN_TEXT' | 'MARKDOWN';
       actualParseEngine?: UploadTask['actualParseEngine'];
       totalChunks: number;

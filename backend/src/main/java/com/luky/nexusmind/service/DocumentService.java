@@ -231,16 +231,18 @@ public class DocumentService {
         Page<DocumentVector> chunkPage = keyword == null || keyword.isBlank()
                 ? documentVectorRepository.findDistinctChunksByFileMd5(fileMd5, pageable)
                 : documentVectorRepository.findDistinctChunksByFileMd5AndKeyword(fileMd5, keyword.trim(), pageable);
+        int actualChunkSize = resolveActualChunkSize(fileMd5, file.getUserId());
 
         List<Map<String, Object>> chunks = chunkPage.getContent().stream()
-                .map(this::toChunkSummary)
+                .map(vector -> toChunkSummary(vector, actualChunkSize))
                 .toList();
 
         Map<String, Object> data = new HashMap<>();
         data.put("fileMd5", file.getFileMd5());
         data.put("fileName", file.getFileName());
         data.put("configuredChunkSize", configuredChunkSize);
-        data.put("actualParseEngine", resolveActualParseEngine(fileMd5, userId));
+        data.put("actualChunkSize", actualChunkSize);
+        data.put("actualParseEngine", resolveActualParseEngine(fileMd5, file.getUserId()));
         data.put("totalChunks", chunkPage.getTotalElements());
         data.put("page", chunkPage.getNumber());
         data.put("size", chunkPage.getSize());
@@ -259,9 +261,9 @@ public class DocumentService {
                 .orElseThrow(() -> new RuntimeException("切片不存在"));
 
         String content = safeText(vector.getTextContent());
-        Map<String, Object> data = toChunkSummary(vector);
+        Map<String, Object> data = toChunkSummary(vector, resolveActualChunkSize(fileMd5, file.getUserId()));
         data.put("fileName", file.getFileName());
-        data.put("actualParseEngine", resolveActualParseEngine(fileMd5, userId));
+        data.put("actualParseEngine", resolveActualParseEngine(fileMd5, file.getUserId()));
         data.put("content", content);
         return data;
     }
@@ -274,7 +276,8 @@ public class DocumentService {
         data.put("fileMd5", file.getFileMd5());
         data.put("fileName", file.getFileName());
         data.put("configuredChunkSize", configuredChunkSize);
-        data.put("actualParseEngine", resolveActualParseEngine(fileMd5, userId));
+        data.put("actualChunkSize", resolveActualChunkSize(fileMd5, file.getUserId()));
+        data.put("actualParseEngine", resolveActualParseEngine(fileMd5, file.getUserId()));
         data.put("totalChunks", totalChunks);
         data.put("processed", file.getStatus() == 1 && totalChunks > 0);
         return data;
@@ -287,7 +290,7 @@ public class DocumentService {
                 .orElseThrow(() -> new RuntimeException("文件不存在或无权限访问"));
     }
 
-    private Map<String, Object> toChunkSummary(DocumentVector vector) {
+    private Map<String, Object> toChunkSummary(DocumentVector vector, int actualChunkSize) {
         String content = safeText(vector.getTextContent());
         Map<String, Object> dto = new HashMap<>();
         dto.put("fileMd5", vector.getFileMd5());
@@ -296,9 +299,17 @@ public class DocumentService {
         dto.put("contentLength", content.length());
         dto.put("byteSize", content.getBytes(StandardCharsets.UTF_8).length);
         dto.put("configuredChunkSize", configuredChunkSize);
+        dto.put("actualChunkSize", actualChunkSize);
         dto.put("contentFormat", vector.getContentFormat() == null ? "PLAIN_TEXT" : vector.getContentFormat().name());
         dto.put("modelVersion", vector.getModelVersion());
         return dto;
+    }
+
+    private int resolveActualChunkSize(String fileMd5, String userId) {
+        return processingStatusService.findByFileMd5AndUserId(fileMd5, userId)
+                .map(FileProcessingStatus::getChunkSize)
+                .filter(size -> size != null && size > 0)
+                .orElse(configuredChunkSize);
     }
 
     private ParseEngine resolveActualParseEngine(String fileMd5, String userId) {

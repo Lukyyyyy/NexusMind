@@ -78,6 +78,8 @@ admin:
 file:
   parsing:
     chunk-size: 512 # 每个文本块的最大字符数
+    min-chunk-size: 256 # 用户可配置文本块大小下限
+    max-chunk-size: 4096 # 用户可配置文本块大小上限
     mineru:
       base-url: ${MINERU_BASE_URL:}
       parse-path: ${MINERU_PARSE_PATH:/file_parse}

@@ -490,6 +490,7 @@ async function refreshProcessingStatusSilently(task: Api.KnowledgeBase.UploadTas
   task.processingError = data.processingError;
   task.parseEngine = data.parseEngine ?? task.parseEngine;
   task.actualParseEngine = data.actualParseEngine ?? task.actualParseEngine ?? task.parseEngine;
+  task.actualChunkSize = data.actualChunkSize ?? task.actualChunkSize ?? task.chunkSize;
   task.processingDurationMillis = data.processingDurationMillis ?? task.processingDurationMillis;
   task.processingStartedAt = data.processingStartedAt ?? task.processingStartedAt;
   task.processingUpdatedAt = data.processingUpdatedAt ?? task.processingUpdatedAt;
@@ -516,6 +517,7 @@ function applyProcessingStatus(status: Api.KnowledgeBase.ProcessingStatus) {
   task.processingError = status.processingError;
   task.parseEngine = status.parseEngine ?? task.parseEngine;
   task.actualParseEngine = status.actualParseEngine ?? task.actualParseEngine ?? task.parseEngine;
+  task.actualChunkSize = status.actualChunkSize ?? task.actualChunkSize ?? task.chunkSize;
   task.processingDurationMillis = status.processingDurationMillis ?? task.processingDurationMillis;
   task.processingStartedAt = status.processingStartedAt ?? task.processingStartedAt;
   task.processingUpdatedAt = status.processingUpdatedAt ?? task.processingUpdatedAt;

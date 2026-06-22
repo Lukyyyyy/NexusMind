@@ -55,7 +55,7 @@ export const useKnowledgeBaseStore = defineStore(SetupStoreId.KnowledgeBase, () 
       const { error } = await request({
         url: '/upload/merge',
         method: 'POST',
-        data: { fileMd5: task.fileMd5, fileName: task.fileName, parseEngine: task.parseEngine }
+        data: { fileMd5: task.fileMd5, fileName: task.fileName, parseEngine: task.parseEngine, chunkSize: task.chunkSize }
       });
       if (error) return false;
 
@@ -115,6 +115,7 @@ export const useKnowledgeBaseStore = defineStore(SetupStoreId.KnowledgeBase, () 
       public: form.isPublic,
       isPublic: form.isPublic,
       parseEngine: form.parseEngine,
+      chunkSize: form.chunkSize,
       uploadedChunks: [],
       progress: 0,
       status: UploadStatus.Pending,

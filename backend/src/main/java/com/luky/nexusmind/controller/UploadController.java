@@ -17,6 +17,7 @@ import com.luky.nexusmind.service.UserService;
 import com.luky.nexusmind.utils.JwtUtils;
 import com.luky.nexusmind.utils.LogUtils;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -72,6 +73,15 @@ public class UploadController {
 
     @Autowired
     private JwtUtils jwtUtils;
+
+    @Value("${file.parsing.chunk-size}")
+    private int defaultTextChunkSize;
+
+    @Value("${file.parsing.min-chunk-size:256}")
+    private int minTextChunkSize;
+
+    @Value("${file.parsing.max-chunk-size:4096}")
+    private int maxTextChunkSize;
 
     public UploadController(UploadService uploadService, KafkaTemplate<String, Object> kafkaTemplate) {
         this.uploadService = uploadService;
@@ -313,8 +323,19 @@ public class UploadController {
         LogUtils.PerformanceMonitor monitor = LogUtils.startPerformanceMonitor("MERGE_FILE");
         String fileType = getFileType(request.fileName());
         ParseEngine parseEngine = ParseEngine.fromNullable(request.parseEngine());
+        int textChunkSize;
+        try {
+            textChunkSize = resolveTextChunkSize(request.chunkSize());
+        } catch (IllegalArgumentException e) {
+            monitor.end("合并失败：解析切片大小无效");
+            Map<String, Object> errorResponse = new HashMap<>();
+            errorResponse.put("code", HttpStatus.BAD_REQUEST.value());
+            errorResponse.put("message", e.getMessage());
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(errorResponse);
+        }
         AiTraceService.TraceSpan traceSpan = aiTraceService.startFileSpan("upload.merge_and_enqueue", userId, request.fileMd5(), request.fileName())
                 .attribute("nexusmind.file.type", fileType)
+                .attribute("nexusmind.parse.chunk_size", textChunkSize)
                 .attribute("nexusmind.parse.requested_engine", parseEngine.name());
         try {
             LogUtils.logBusiness("MERGE_FILE", userId, "接收到合并文件请求: fileMd5=%s, fileName=%s, fileType=%s", 
@@ -401,7 +422,8 @@ public class UploadController {
                     fileUpload.getUserId(),
                     fileUpload.getOrgTag(),
                     fileUpload.isPublic(),
-                    parseEngine
+                    parseEngine,
+                    textChunkSize
             );
             task.setTraceparent(traceSpan.traceparent());
             processingStatusService.markQueued(task);
@@ -482,7 +504,18 @@ public class UploadController {
     /**
      * 合并请求的辅助类，包含文件的MD5值和文件名
      */
-    public record MergeRequest(String fileMd5, String fileName, String parseEngine) {}
+    public record MergeRequest(String fileMd5, String fileName, String parseEngine, Integer chunkSize) {}
+
+    private int resolveTextChunkSize(Integer requestedChunkSize) {
+        if (requestedChunkSize == null) {
+            return defaultTextChunkSize;
+        }
+        if (requestedChunkSize < minTextChunkSize || requestedChunkSize > maxTextChunkSize) {
+            throw new IllegalArgumentException(
+                    String.format("chunkSize必须在%d到%d之间", minTextChunkSize, maxTextChunkSize));
+        }
+        return requestedChunkSize;
+    }
 
     /**
      * 获取支持的文件类型列表接口

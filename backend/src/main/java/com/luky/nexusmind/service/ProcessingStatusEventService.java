@@ -74,6 +74,7 @@ public class ProcessingStatusEventService {
         data.put("actualParseEngine", status.getActualParseEngine() != null
                 ? status.getActualParseEngine()
                 : status.getParseEngine());
+        data.put("actualChunkSize", status.getChunkSize());
         data.put("parsedChunkCount", status.getParsedChunkCount());
         data.put("vectorizedCount", status.getVectorizedCount());
         data.put("esDocumentCount", status.getEsDocumentCount());

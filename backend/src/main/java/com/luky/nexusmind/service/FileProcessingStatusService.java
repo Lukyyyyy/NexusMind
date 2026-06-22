@@ -29,6 +29,7 @@ public class FileProcessingStatusService {
     public FileProcessingStatus markQueued(FileProcessingTask task) {
         FileProcessingStatus status = getOrCreate(task);
         status.setParseEngine(task.getParseEngine() == null ? ParseEngine.AUTO : task.getParseEngine());
+        status.setChunkSize(task.getChunkSize());
         status.setActualParseEngine(null);
         status.setCurrentStage(ProcessingStage.QUEUED);
         status.setState(ProcessingState.PENDING);
@@ -139,6 +140,7 @@ public class FileProcessingStatusService {
                     status.setFileName(task.getFileName());
                     status.setUserId(task.getUserId());
                     status.setParseEngine(task.getParseEngine() == null ? ParseEngine.AUTO : task.getParseEngine());
+                    status.setChunkSize(task.getChunkSize());
                     status.setCreatedAt(LocalDateTime.now());
                     return status;
                 });

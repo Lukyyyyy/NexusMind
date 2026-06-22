@@ -58,6 +58,9 @@ public class FileProcessingConsumer {
                 .attribute("nexusmind.org_tag", task.getOrgTag())
                 .attribute("nexusmind.upload.is_public", task.isPublic())
                 .attribute("nexusmind.parse.requested_engine", task.getParseEngine() != null ? task.getParseEngine().name() : "AUTO");
+        if (task.getChunkSize() != null) {
+            span.attribute("nexusmind.parse.chunk_size", task.getChunkSize());
+        }
         try {
             // 下载文件
             AiTraceService.TraceSpan downloadSpan = aiTraceService.startFileSpan(
@@ -85,7 +88,7 @@ public class FileProcessingConsumer {
             // 解析文件
             processingStatusService.markRunning(task, ProcessingStage.PARSING, "正在解析文件");
             int parsedChunkCount = parseService.parseAndSave(task.getFileMd5(), fileStream,
-                    task.getUserId(), task.getOrgTag(), task.isPublic(), task.getParseEngine(), task.getFileName());
+                    task.getUserId(), task.getOrgTag(), task.isPublic(), task.getParseEngine(), task.getFileName(), task.getChunkSize());
             processingStatusService.markParsed(task, parsedChunkCount);
             log.info("文件解析完成，fileMd5: {}", task.getFileMd5());
 

@@ -55,3 +55,6 @@ CREATE TABLE document_vectors (
                                   org_tag VARCHAR(50) COMMENT '文件所属组织标签',
                                   is_public BOOLEAN NOT NULL DEFAULT FALSE COMMENT '文件是否公开'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='文档向量存储表';
+
+ALTER TABLE file_processing_status
+    ADD COLUMN chunk_size INT NULL COMMENT '该文件解析时实际使用的文本切片大小';

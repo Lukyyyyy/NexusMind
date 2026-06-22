@@ -11,28 +11,35 @@ import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.lang.reflect.Proxy;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ParseServiceMinerURoutingTest {
 
     private ParseService parseService;
     private RecordingMinerUParseClient minerUParseClient;
     private RecordingFileProcessingStatusService processingStatusService;
+    private List<DocumentVector> savedVectors;
 
     @BeforeEach
     void setUp() {
         parseService = new ParseService();
         minerUParseClient = new RecordingMinerUParseClient();
         processingStatusService = new RecordingFileProcessingStatusService();
+        savedVectors = new ArrayList<>();
 
-        ReflectionTestUtils.setField(parseService, "documentVectorRepository", recordingDocumentVectorRepository());
+        ReflectionTestUtils.setField(parseService, "documentVectorRepository", recordingDocumentVectorRepository(savedVectors));
         ReflectionTestUtils.setField(parseService, "aiTraceService",
                 new AiTraceService(false, "", "", "", "test", false));
         ReflectionTestUtils.setField(parseService, "minerUParseClient", minerUParseClient);
         ReflectionTestUtils.setField(parseService, "processingStatusService", processingStatusService);
         ReflectionTestUtils.setField(parseService, "chunkSize", 1000);
+        ReflectionTestUtils.setField(parseService, "minChunkSize", 1);
+        ReflectionTestUtils.setField(parseService, "maxChunkSize", 1000);
         ReflectionTestUtils.setField(parseService, "parentChunkSize", 1048576);
         ReflectionTestUtils.setField(parseService, "bufferSize", 8192);
         ReflectionTestUtils.setField(parseService, "maxMemoryThreshold", 0.95);
@@ -50,12 +57,30 @@ class ParseServiceMinerURoutingTest {
         assertEquals(ParseEngine.TIKA, processingStatusService.actualParseEngine);
     }
 
-    private DocumentVectorRepository recordingDocumentVectorRepository() {
+    @Test
+    void customChunkSizeOverridesDefaultWhenParsing() throws Exception {
+        String content = "这是第一段用于验证自定义切片大小的文本。"
+                + "这是第二段用于验证解析时不会使用默认切片大小的文本。"
+                + "这是第三段用于让内容超过二十个字符。";
+
+        int parsedChunks = parseService.parseAndSave("md5-custom", new ByteArrayInputStream(content.getBytes(StandardCharsets.UTF_8)),
+                "user", "org", true, ParseEngine.TIKA, "note.txt", 20);
+
+        assertTrue(parsedChunks > 1);
+        assertFalse(savedVectors.isEmpty());
+        assertTrue(savedVectors.stream().allMatch(vector -> vector.getTextContent().length() <= 20),
+                "所有切片都应使用请求传入的20字符上限");
+    }
+
+    private DocumentVectorRepository recordingDocumentVectorRepository(List<DocumentVector> savedVectors) {
         return (DocumentVectorRepository) Proxy.newProxyInstance(
                 DocumentVectorRepository.class.getClassLoader(),
                 new Class<?>[]{DocumentVectorRepository.class},
                 (proxy, method, args) -> {
                     if ("saveAll".equals(method.getName())) {
+                        @SuppressWarnings("unchecked")
+                        Iterable<DocumentVector> vectors = (Iterable<DocumentVector>) args[0];
+                        vectors.forEach(savedVectors::add);
                         return args[0];
                     }
                     if (method.getReturnType().isPrimitive()) {

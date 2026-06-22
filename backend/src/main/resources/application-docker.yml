@@ -79,6 +79,8 @@ admin:
 file:
   parsing:
     chunk-size: 512 # 每个文本块的最大字符数
+    min-chunk-size: 256 # 用户可配置文本块大小下限
+    max-chunk-size: 4096 # 用户可配置文本块大小上限
     buffer-size: 8192    # 8KB 缓冲区
     max-memory-threshold: 0.8  # 80% 内存阈值
     mineru:

@@ -18,15 +18,21 @@ public class FileProcessingTask {
     private String orgTag;   // 文件所属组织标签
     private boolean isPublic; // 文件是否公开
     private ParseEngine parseEngine = ParseEngine.AUTO; // 文档解析引擎
+    private Integer chunkSize; // 该文件解析时使用的文本切片大小
     private String traceparent; // OpenTelemetry trace context
 
     public FileProcessingTask(String fileMd5, String filePath, String fileName,
                               String userId, String orgTag, boolean isPublic) {
-        this(fileMd5, filePath, fileName, userId, orgTag, isPublic, ParseEngine.AUTO);
+        this(fileMd5, filePath, fileName, userId, orgTag, isPublic, ParseEngine.AUTO, null);
     }
 
     public FileProcessingTask(String fileMd5, String filePath, String fileName,
                               String userId, String orgTag, boolean isPublic, ParseEngine parseEngine) {
+        this(fileMd5, filePath, fileName, userId, orgTag, isPublic, parseEngine, null);
+    }
+
+    public FileProcessingTask(String fileMd5, String filePath, String fileName,
+                              String userId, String orgTag, boolean isPublic, ParseEngine parseEngine, Integer chunkSize) {
         this.fileMd5 = fileMd5;
         this.filePath = filePath;
         this.fileName = fileName;
@@ -34,6 +40,7 @@ public class FileProcessingTask {
         this.orgTag = orgTag;
         this.isPublic = isPublic;
         this.parseEngine = parseEngine == null ? ParseEngine.AUTO : parseEngine;
+        this.chunkSize = chunkSize;
     }
     
     /**
@@ -47,5 +54,6 @@ public class FileProcessingTask {
         this.orgTag = "DEFAULT";
         this.isPublic = false;
         this.parseEngine = ParseEngine.AUTO;
+        this.chunkSize = null;
     }
 }
