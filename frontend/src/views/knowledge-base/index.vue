@@ -1,5 +1,5 @@
 <script setup lang="tsx">
-import type { DropdownOption } from 'naive-ui';
+import type { DataTableSortState, DropdownOption } from 'naive-ui';
 import type { UploadFileInfo } from 'naive-ui';
 import { NButton, NDropdown, NEllipsis, NModal, NProgress, NTag, NTooltip, NUpload } from 'naive-ui';
 import { uploadAccept } from '@/constants/common';
@@ -22,6 +22,16 @@ const chunkVisible = ref(false);
 const chunkFileMd5 = ref('');
 const chunkFileName = ref('');
 const chunkActualParseEngine = ref<Api.KnowledgeBase.UploadTask['actualParseEngine']>(null);
+type SortableColumnKey = 'processingDurationMillis' | 'createdAt';
+type ActiveSortState = {
+  columnKey: SortableColumnKey;
+  order: Exclude<DataTableSortState['order'], false>;
+};
+
+const sortState = ref<ActiveSortState>({
+  columnKey: 'createdAt',
+  order: 'descend'
+});
 
 function apiFn() {
   return fakePaginationRequest<Api.KnowledgeBase.List>({ url: '/documents/uploads' });
@@ -91,7 +101,7 @@ function confirmDelete(row: Api.KnowledgeBase.UploadTask) {
   });
 }
 
-const { columns, columnChecks, data, getData, loading } = useTable({
+const { columns, columnChecks, data, getData, loading, reloadColumns } = useTable({
   apiFn,
   immediate: false,
   columns: () => [
@@ -130,6 +140,8 @@ const { columns, columnChecks, data, getData, loading } = useTable({
       key: 'processingDurationMillis',
       title: '处理',
       width: 170,
+      sorter: true,
+      sortOrder: sortState.value.columnKey === 'processingDurationMillis' ? sortState.value.order : false,
       render: row => (
         <div class="leading-5">
           <div class="text-14px text-#1f2937">{formatDuration(resolveProcessingDuration(row, durationNow.value))}</div>
@@ -157,6 +169,8 @@ const { columns, columnChecks, data, getData, loading } = useTable({
       key: 'createdAt',
       title: '上传时间',
       width: 170,
+      sorter: true,
+      sortOrder: sortState.value.columnKey === 'createdAt' ? sortState.value.order : false,
       render: row => dayjs(row.createdAt).format('YYYY-MM-DD HH:mm:ss')
     },
     {
@@ -193,6 +207,19 @@ const { columns, columnChecks, data, getData, loading } = useTable({
 const store = useKnowledgeBaseStore();
 const { tasks } = storeToRefs(store);
 const durationNow = ref(Date.now());
+const sortedTasks = computed(() => {
+  const sorted = [...tasks.value];
+  const { columnKey, order } = sortState.value;
+
+  sorted.sort((a, b) => {
+    const result = compareTasksByColumn(a, b, columnKey, order);
+    if (result !== 0) return result;
+
+    return compareTasksByColumn(a, b, 'createdAt', 'descend');
+  });
+
+  return sorted;
+});
 const isHttpProxy = import.meta.env.DEV && import.meta.env.VITE_HTTP_PROXY === 'Y';
 const { baseURL } = getServiceBaseURL(import.meta.env, isHttpProxy);
 let durationRefreshTimer: ReturnType<typeof setInterval> | null = null;
@@ -210,6 +237,59 @@ onUnmounted(() => {
   statusEventSource?.close();
   statusEventSource = null;
 });
+
+watch(sortState, () => {
+  reloadColumns();
+});
+
+function handleSorterUpdate(sorter: DataTableSortState | DataTableSortState[] | null) {
+  const nextSorter = Array.isArray(sorter) ? sorter[0] : sorter;
+
+  if (!isSortableColumnKey(nextSorter?.columnKey) || !nextSorter.order) {
+    sortState.value = {
+      columnKey: 'createdAt',
+      order: 'descend'
+    };
+    return;
+  }
+
+  sortState.value = {
+    columnKey: nextSorter.columnKey,
+    order: nextSorter.order
+  };
+}
+
+function isSortableColumnKey(key: unknown): key is SortableColumnKey {
+  return key === 'processingDurationMillis' || key === 'createdAt';
+}
+
+function compareTasksByColumn(
+  a: Api.KnowledgeBase.UploadTask,
+  b: Api.KnowledgeBase.UploadTask,
+  columnKey: SortableColumnKey,
+  order: ActiveSortState['order']
+) {
+  const direction = order === 'ascend' ? 1 : -1;
+
+  if (columnKey === 'processingDurationMillis') {
+    return (
+      compareNullableNumbers(resolveProcessingDuration(a, durationNow.value), resolveProcessingDuration(b, durationNow.value)) *
+      direction
+    );
+  }
+
+  return compareNullableNumbers(parseDate(a.createdAt), parseDate(b.createdAt)) * direction;
+}
+
+function compareNullableNumbers(a: number | null | undefined, b: number | null | undefined) {
+  const hasA = typeof a === 'number' && Number.isFinite(a);
+  const hasB = typeof b === 'number' && Number.isFinite(b);
+
+  if (!hasA && !hasB) return 0;
+  if (!hasA) return 1;
+  if (!hasB) return -1;
+  return a - b;
+}
 
 /** 异步获取列表函数 该函数主要用于更新或初始化上传任务列表 它首先调用getData函数获取数据，然后根据获取到的数据状态更新任务列表 */
 async function getList() {
@@ -578,7 +658,7 @@ async function onBeforeUpload(
       <NDataTable
         striped
         :columns="columns"
-        :data="tasks"
+        :data="sortedTasks"
         size="small"
         :flex-height="!appStore.isMobile"
         :scroll-x="1440"
@@ -586,6 +666,7 @@ async function onBeforeUpload(
         remote
         :row-key="row => row.id"
         :pagination="false"
+        @update:sorter="handleSorterUpdate"
         class="sm:h-full"
       />
     </NCard>
