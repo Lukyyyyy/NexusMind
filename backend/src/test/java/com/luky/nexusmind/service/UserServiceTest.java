@@ -1,40 +1,48 @@
 package com.luky.nexusmind.service;
 
 import com.luky.nexusmind.exception.CustomException;
+import com.luky.nexusmind.model.OrganizationTag;
 import com.luky.nexusmind.model.User;
+import com.luky.nexusmind.repository.OrganizationTagRepository;
 import com.luky.nexusmind.repository.UserRepository;
 import com.luky.nexusmind.utils.PasswordUtil;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.mockito.ArgumentCaptor;
-import org.mockito.InjectMocks;
-import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
 import org.springframework.http.HttpStatus;
+import org.springframework.test.util.ReflectionTestUtils;
 
+import java.lang.reflect.InvocationHandler;
+import java.lang.reflect.Proxy;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
-import static org.hamcrest.Matchers.any;
 import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.Mockito.*;
+
 /**
  * UserService 的测试类
  */
 class UserServiceTest {
-    // 模拟 UserRepository 实例
-    @Mock
-    private UserRepository userRepository;
-
-    // 注入模拟的 UserService 实例
-    @InjectMocks
     private UserService userService;
+    private InMemoryUserRepository users;
+    private InMemoryOrganizationTagRepository organizationTags;
+    private RecordingOrgTagCacheService cache;
 
     /**
-     * 在每个测试方法执行前初始化模拟对象
+     * 在每个测试方法执行前初始化测试替身
      */
     @BeforeEach
     void setUp() {
-        MockitoAnnotations.openMocks(this);
+        users = new InMemoryUserRepository();
+        organizationTags = new InMemoryOrganizationTagRepository();
+        cache = new RecordingOrgTagCacheService();
+
+        userService = new UserService();
+        ReflectionTestUtils.setField(userService, "userRepository", users.proxy());
+        ReflectionTestUtils.setField(userService, "organizationTagRepository", organizationTags.proxy());
+        ReflectionTestUtils.setField(userService, "orgTagCacheService", cache);
     }
 
     /**
@@ -42,22 +50,22 @@ class UserServiceTest {
      */
     @Test
     void testRegisterUser_Success() {
-        // 假设用户名 "testuser" 在数据库中不存在
-        when(userRepository.findByUsername("testuser")).thenReturn(Optional.empty());
+        organizationTags.save(existingTag("default", "默认组织"));
 
-        // 调用 userService 的 registerUser 方法进行用户注册
         userService.registerUser("testuser", "password123");
 
-        // 创建 ArgumentCaptor 来捕获 save 方法的参数
-        ArgumentCaptor<User> userCaptor = ArgumentCaptor.forClass(User.class);
-
-        // 验证 userRepository.save 被调用了一次，并捕获参数
-        verify(userRepository, times(1)).save(userCaptor.capture());
-
-        // 获取捕获的 User 对象并进行断言
-        User savedUser = userCaptor.getValue();
+        User savedUser = users.findByUsername("testuser").orElseThrow();
         assertNotNull(savedUser);
         assertEquals("testuser", savedUser.getUsername());
+        assertEquals("default,PRIVATE_testuser", savedUser.getOrgTags());
+        assertEquals("PRIVATE_testuser", savedUser.getPrimaryOrg());
+
+        OrganizationTag privateTag = organizationTags.findByTagId("PRIVATE_testuser").orElseThrow();
+        assertEquals("testuser的私人空间", privateTag.getName());
+        assertSame(savedUser, privateTag.getCreatedBy());
+
+        assertEquals(List.of("default", "PRIVATE_testuser"), cache.cachedOrgTags.get("testuser"));
+        assertEquals("PRIVATE_testuser", cache.cachedPrimaryOrg.get("testuser"));
     }
 
     /**
@@ -65,11 +73,14 @@ class UserServiceTest {
      */
     @Test
     void testRegisterUser_UsernameExists() {
-        // 假设用户名 "testuser" 在数据库中已存在
-        when(userRepository.findByUsername("testuser")).thenReturn(Optional.of(new User()));
+        User existingUser = new User();
+        existingUser.setUsername("testuser");
+        users.save(existingUser);
 
-        // 断言在注册已存在的用户名时抛出 CustomException 异常
-        CustomException exception = assertThrows(CustomException.class, () -> userService.registerUser("testuser", "password123"));
+        CustomException exception = assertThrows(
+                CustomException.class,
+                () -> userService.registerUser("testuser", "password123")
+        );
         assertEquals("Username already exists", exception.getMessage());
         assertEquals(HttpStatus.BAD_REQUEST, exception.getStatus());
     }
@@ -79,51 +90,154 @@ class UserServiceTest {
      */
     @Test
     void testAuthenticateUser_Success() {
-    // 使用 PasswordUtil 生成加密密码
-    String rawPassword = "password123";
-    String encodedPassword = PasswordUtil.encode(rawPassword);
+        String rawPassword = "password123";
+        String encodedPassword = PasswordUtil.encode(rawPassword);
 
-    // 创建一个带有加密密码的用户对象，并确保设置了用户名
-    User user = new User();
-    user.setUsername("testuser"); // 确保设置了用户名
-    user.setPassword(encodedPassword);
+        User user = new User();
+        user.setUsername("testuser");
+        user.setPassword(encodedPassword);
+        users.save(user);
 
-    when(userRepository.findByUsername("testuser")).thenReturn(Optional.of(user));
-
-    try {
-        // 调用 userService 的 authenticateUser 方法进行用户认证
         String username = userService.authenticateUser("testuser", rawPassword);
 
-        // 打印返回的用户名（仅用于调试）
-        System.out.println("Returned username: " + username);
-
-        // 断言返回的用户名是否正确
         assertEquals("testuser", username);
-    } catch (CustomException e) {
-        // 捕获并打印异常信息
-        System.out.println("Exception message: " + e.getMessage());
-        throw e;
     }
-
-    // 打印实际的加密密码（仅用于调试）
-    System.out.println("Actual encrypted password: " + user.getPassword());
-}
-
-
-
-
 
     /**
      * 测试用户认证失败的情况
      */
     @Test
     void testAuthenticateUser_InvalidCredentials() {
-        // 假设用户名 "testuser" 在数据库中不存在
-        when(userRepository.findByUsername("testuser")).thenReturn(Optional.empty());
-
-        // 断言在使用错误密码认证时抛出 CustomException 异常
-        CustomException exception = assertThrows(CustomException.class, () -> userService.authenticateUser("testuser", "wrongpassword"));
+        CustomException exception = assertThrows(
+                CustomException.class,
+                () -> userService.authenticateUser("testuser", "wrongpassword")
+        );
         assertEquals("Invalid username or password", exception.getMessage());
         assertEquals(HttpStatus.UNAUTHORIZED, exception.getStatus());
+    }
+
+    @Test
+    void getUserOrgTagsDeduplicatesCachedTags() {
+        organizationTags.save(existingTag("default", "默认组织"));
+        organizationTags.save(existingTag("PRIVATE_jack", "Jack的私人空间"));
+        User user = new User();
+        user.setUsername("jack");
+        user.setPassword(PasswordUtil.encode("password123"));
+        user.setOrgTags("default,PRIVATE_jack");
+        user.setPrimaryOrg("PRIVATE_jack");
+        users.save(user);
+        cache.cachedOrgTags.put("jack", List.of("PRIVATE_jack", "default", "PRIVATE_jack"));
+        cache.cachedPrimaryOrg.put("jack", "PRIVATE_jack");
+
+        Map<String, Object> orgTags = userService.getUserOrgTags("jack");
+
+        assertEquals(List.of("PRIVATE_jack", "default"), orgTags.get("orgTags"));
+        @SuppressWarnings("unchecked")
+        List<Map<String, String>> details = (List<Map<String, String>>) orgTags.get("orgTagDetails");
+        assertEquals(List.of("PRIVATE_jack", "default"), details.stream().map(tag -> tag.get("tagId")).toList());
+    }
+
+    private static OrganizationTag existingTag(String tagId, String name) {
+        OrganizationTag tag = new OrganizationTag();
+        tag.setTagId(tagId);
+        tag.setName(name);
+        tag.setDescription(name);
+        return tag;
+    }
+
+    private static class RecordingOrgTagCacheService extends OrgTagCacheService {
+        private final Map<String, List<String>> cachedOrgTags = new HashMap<>();
+        private final Map<String, String> cachedPrimaryOrg = new HashMap<>();
+
+        @Override
+        public void cacheUserOrgTags(String username, List<String> orgTags) {
+            cachedOrgTags.put(username, new ArrayList<>(orgTags));
+        }
+
+        @Override
+        public void cacheUserPrimaryOrg(String username, String primaryOrg) {
+            cachedPrimaryOrg.put(username, primaryOrg);
+        }
+
+        @Override
+        public List<String> getUserOrgTags(String username) {
+            return cachedOrgTags.get(username);
+        }
+
+        @Override
+        public String getUserPrimaryOrg(String username) {
+            return cachedPrimaryOrg.get(username);
+        }
+
+        @Override
+        public void deleteUserEffectiveTagsCache(String username) {
+            // No Redis in this unit test.
+        }
+    }
+
+    private static class InMemoryUserRepository {
+        private final Map<String, User> byUsername = new HashMap<>();
+        private long nextId = 1L;
+
+        UserRepository proxy() {
+            return UserServiceTest.proxy(UserRepository.class, (proxy, method, args) -> switch (method.getName()) {
+                case "findByUsername" -> findByUsername((String) args[0]);
+                case "findAll" -> new ArrayList<>(byUsername.values());
+                case "save" -> save((User) args[0]);
+                default -> defaultValue(method.getReturnType());
+            });
+        }
+
+        Optional<User> findByUsername(String username) {
+            return Optional.ofNullable(byUsername.get(username));
+        }
+
+        User save(User user) {
+            if (user.getId() == null) {
+                user.setId(nextId++);
+            }
+            byUsername.put(user.getUsername(), user);
+            return user;
+        }
+    }
+
+    private static class InMemoryOrganizationTagRepository {
+        private final Map<String, OrganizationTag> byTagId = new HashMap<>();
+
+        OrganizationTagRepository proxy() {
+            return UserServiceTest.proxy(OrganizationTagRepository.class, (proxy, method, args) -> switch (method.getName()) {
+                case "existsByTagId" -> byTagId.containsKey((String) args[0]);
+                case "findByTagId" -> findByTagId((String) args[0]);
+                case "save" -> save((OrganizationTag) args[0]);
+                default -> defaultValue(method.getReturnType());
+            });
+        }
+
+        Optional<OrganizationTag> findByTagId(String tagId) {
+            return Optional.ofNullable(byTagId.get(tagId));
+        }
+
+        OrganizationTag save(OrganizationTag tag) {
+            byTagId.put(tag.getTagId(), tag);
+            return tag;
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static <T> T proxy(Class<T> type, InvocationHandler handler) {
+        return (T) Proxy.newProxyInstance(type.getClassLoader(), new Class<?>[]{type}, handler);
+    }
+
+    private static Object defaultValue(Class<?> returnType) {
+        if (returnType.equals(boolean.class)) {
+            return false;
+        }
+        if (returnType.equals(long.class) || returnType.equals(int.class)) {
+            return 0;
+        }
+        if (returnType.equals(void.class)) {
+            return null;
+        }
+        return null;
     }
 }

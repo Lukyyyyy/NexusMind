@@ -146,6 +146,7 @@ public class DocumentController {
             LogUtils.logBusiness("GET_ACCESSIBLE_FILES", userId, "接收到获取可访问文件请求: orgTags=%s", orgTags);
             
             List<FileUpload> files = documentService.getAccessibleFiles(userId, orgTags);
+            List<Map<String, Object>> fileData = toFileDtos(files, userId);
             
             LogUtils.logUserOperation(userId, "GET_ACCESSIBLE_FILES", "file_list", "SUCCESS");
             LogUtils.logBusiness("GET_ACCESSIBLE_FILES", userId, "成功获取可访问文件: fileCount=%d", files.size());
@@ -154,7 +155,7 @@ public class DocumentController {
             Map<String, Object> response = new HashMap<>();
             response.put("code", 200);
             response.put("message", "获取可访问文件列表成功");
-            response.put("data", files);
+            response.put("data", fileData);
             return ResponseEntity.ok(response);
         } catch (Exception e) {
             LogUtils.logBusinessError("GET_ACCESSIBLE_FILES", userId, "获取可访问文件失败", e);
@@ -181,36 +182,7 @@ public class DocumentController {
             LogUtils.logBusiness("GET_USER_UPLOADED_FILES", userId, "接收到获取用户上传文件请求");
             
             List<FileUpload> files = documentService.getUserUploadedFiles(userId);
-            Map<String, FileProcessingStatus> processingStatusMap = processingStatusService.findLatestByFileMd5(
-                    files.stream().map(FileUpload::getFileMd5).collect(Collectors.toSet()),
-                    userId
-            );
-            
-            // 将FileUpload转换为包含tagName的DTO
-            List<Map<String, Object>> fileData = files.stream().map(file -> {
-                Map<String, Object> dto = new HashMap<>();
-                dto.put("fileMd5", file.getFileMd5());
-                dto.put("fileName", file.getFileName());
-                dto.put("totalSize", file.getTotalSize());
-                dto.put("status", file.getStatus());
-                dto.put("userId", file.getUserId());
-                dto.put("uploaderName", resolveUploaderName(file.getUserId()));
-                dto.put("public", file.isPublic());
-                dto.put("createdAt", file.getCreatedAt());
-                dto.put("mergedAt", file.getMergedAt());
-                FileProcessingStatus processingStatus = processingStatusMap.get(file.getFileMd5());
-                if (processingStatus != null) {
-                    dto.putAll(processingStatusEventService.toPayload(processingStatus));
-                } else {
-                    fillLegacyProcessingStatus(dto, file);
-                }
-                
-                // 将orgTag从tagId转换为tagName
-                String orgTagName = getOrgTagName(file.getOrgTag());
-                dto.put("orgTagName", orgTagName);
-                
-                return dto;
-            }).collect(Collectors.toList());
+            List<Map<String, Object>> fileData = toFileDtos(files, userId);
             
             LogUtils.logUserOperation(userId, "GET_USER_UPLOADED_FILES", "file_list", "SUCCESS");
             LogUtils.logBusiness("GET_USER_UPLOADED_FILES", userId, "成功获取用户上传文件: fileCount=%d", files.size());
@@ -229,6 +201,36 @@ public class DocumentController {
             response.put("message", "获取用户上传文件列表失败: " + e.getMessage());
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
         }
+    }
+
+    private List<Map<String, Object>> toFileDtos(List<FileUpload> files, String currentUserId) {
+        Map<String, FileProcessingStatus> processingStatusMap = processingStatusService.findLatestByFileMd5(
+                files.stream().map(FileUpload::getFileMd5).collect(Collectors.toSet()),
+                currentUserId
+        );
+
+        return files.stream().map(file -> {
+            Map<String, Object> dto = new HashMap<>();
+            dto.put("fileMd5", file.getFileMd5());
+            dto.put("fileName", file.getFileName());
+            dto.put("totalSize", file.getTotalSize());
+            dto.put("status", file.getStatus());
+            dto.put("userId", file.getUserId());
+            dto.put("uploaderName", resolveUploaderName(file.getUserId()));
+            dto.put("public", file.isPublic());
+            dto.put("createdAt", file.getCreatedAt());
+            dto.put("mergedAt", file.getMergedAt());
+
+            FileProcessingStatus processingStatus = processingStatusMap.get(file.getFileMd5());
+            if (processingStatus != null) {
+                dto.putAll(processingStatusEventService.toPayload(processingStatus));
+            } else {
+                fillLegacyProcessingStatus(dto, file);
+            }
+
+            dto.put("orgTagName", getOrgTagName(file.getOrgTag()));
+            return dto;
+        }).collect(Collectors.toList());
     }
 
     private void fillLegacyProcessingStatus(Map<String, Object> dto, FileUpload file) {

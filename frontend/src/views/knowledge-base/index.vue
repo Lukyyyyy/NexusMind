@@ -34,7 +34,7 @@ const sortState = ref<ActiveSortState>({
 });
 
 function apiFn() {
-  return fakePaginationRequest<Api.KnowledgeBase.List>({ url: '/documents/uploads' });
+  return fakePaginationRequest<Api.KnowledgeBase.List>({ url: '/documents/accessible' });
 }
 
 function renderIcon(fileName: string) {

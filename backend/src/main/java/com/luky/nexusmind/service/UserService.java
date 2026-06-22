@@ -37,7 +37,8 @@ public class UserService {
 
     private static final Logger logger = LoggerFactory.getLogger(UserService.class);
     
-    private static final String DEFAULT_ORG_TAG = "DEFAULT";
+    private static final String DEFAULT_ORG_TAG = "default";
+    private static final String LEGACY_DEFAULT_ORG_TAG = "DEFAULT";
     private static final String DEFAULT_ORG_NAME = "默认组织";
     private static final String DEFAULT_ORG_DESCRIPTION = "系统默认组织标签，自动分配给所有新用户";
     private static final String PRIVATE_TAG_PREFIX = "PRIVATE_";
@@ -85,8 +86,8 @@ public class UserService {
         String privateTagId = PRIVATE_TAG_PREFIX + username;
         createPrivateOrgTag(privateTagId, username, user);
         
-        // 只分配私人组织标签
-        user.setOrgTags(privateTagId);
+        List<String> assignedOrgTags = List.of(DEFAULT_ORG_TAG, privateTagId);
+        user.setOrgTags(String.join(",", assignedOrgTags));
         
         // 设置私人组织标签为主组织标签
         user.setPrimaryOrg(privateTagId);
@@ -94,7 +95,7 @@ public class UserService {
         userRepository.save(user);
         
         // 缓存组织标签信息
-        orgTagCacheService.cacheUserOrgTags(username, List.of(privateTagId));
+        orgTagCacheService.cacheUserOrgTags(username, assignedOrgTags);
         orgTagCacheService.cacheUserPrimaryOrg(username, privateTagId);
         
         logger.info("User registered successfully with private organization tag: {}", username);
@@ -232,6 +233,7 @@ public class UserService {
             // 若不匹配，抛出自定义异常，状态码为 401 Unauthorized
             throw new CustomException("Invalid username or password", HttpStatus.UNAUTHORIZED);
         }
+        ensureDefaultOrgAssigned(user);
         // 认证成功，返回用户的用户名
         return user.getUsername();
     }
@@ -361,6 +363,7 @@ public class UserService {
     public Map<String, Object> getUserOrgTags(String username) {
         User user = userRepository.findByUsername(username)
                 .orElseThrow(() -> new CustomException("User not found", HttpStatus.NOT_FOUND));
+        ensureDefaultOrgAssigned(user);
         
         // 尝试从缓存获取
         List<String> orgTags = orgTagCacheService.getUserOrgTags(username);
@@ -368,13 +371,18 @@ public class UserService {
         
         // 如果缓存中没有，则从数据库获取
         if (orgTags == null || orgTags.isEmpty()) {
-            orgTags = Arrays.asList(user.getOrgTags().split(","));
+            orgTags = parseOrgTags(user.getOrgTags());
             // 更新缓存
             orgTagCacheService.cacheUserOrgTags(username, orgTags);
+        } else {
+            orgTags = normalizeOrgTags(orgTags);
         }
         
         if (primaryOrg == null || primaryOrg.isEmpty()) {
             primaryOrg = user.getPrimaryOrg();
+        }
+        primaryOrg = normalizeNullableOrgTag(primaryOrg);
+        if (primaryOrg != null && !primaryOrg.isEmpty()) {
             // 更新缓存
             orgTagCacheService.cacheUserPrimaryOrg(username, primaryOrg);
         }
@@ -400,6 +408,65 @@ public class UserService {
         
         return result;
     }
+
+    private void ensureDefaultOrgAssigned(User user) {
+        ensureDefaultOrgTagExists();
+
+        List<String> orgTags = parseOrgTags(user.getOrgTags());
+        if (!orgTags.contains(DEFAULT_ORG_TAG)) {
+            orgTags.add(0, DEFAULT_ORG_TAG);
+        }
+
+        String normalizedOrgTags = String.join(",", orgTags);
+        String normalizedPrimaryOrg = normalizeNullableOrgTag(user.getPrimaryOrg());
+        boolean unchanged = normalizedOrgTags.equals(user.getOrgTags())
+                && normalizedPrimaryOrg != null
+                && normalizedPrimaryOrg.equals(user.getPrimaryOrg())
+                && !normalizedPrimaryOrg.isEmpty();
+        if (unchanged) {
+            return;
+        }
+
+        user.setOrgTags(normalizedOrgTags);
+
+        if (normalizedPrimaryOrg == null || normalizedPrimaryOrg.isEmpty()) {
+            user.setPrimaryOrg(DEFAULT_ORG_TAG);
+        } else {
+            user.setPrimaryOrg(normalizedPrimaryOrg);
+        }
+
+        userRepository.save(user);
+        orgTagCacheService.cacheUserOrgTags(user.getUsername(), orgTags);
+        if (user.getPrimaryOrg() != null && !user.getPrimaryOrg().isEmpty()) {
+            orgTagCacheService.cacheUserPrimaryOrg(user.getUsername(), user.getPrimaryOrg());
+        }
+        orgTagCacheService.deleteUserEffectiveTagsCache(user.getUsername());
+    }
+
+    private List<String> parseOrgTags(String orgTags) {
+        if (orgTags == null || orgTags.isBlank()) {
+            return new ArrayList<>();
+        }
+
+        return normalizeOrgTags(Arrays.asList(orgTags.split(",")));
+    }
+
+    private List<String> normalizeOrgTags(List<String> orgTags) {
+        return orgTags.stream()
+                .map(String::trim)
+                .map(this::normalizeOrgTag)
+                .filter(tag -> !tag.isEmpty())
+                .distinct()
+                .collect(Collectors.toCollection(ArrayList::new));
+    }
+
+    private String normalizeOrgTag(String tagId) {
+        return LEGACY_DEFAULT_ORG_TAG.equals(tagId) || DEFAULT_ORG_NAME.equals(tagId) ? DEFAULT_ORG_TAG : tagId;
+    }
+
+    private String normalizeNullableOrgTag(String tagId) {
+        return tagId == null ? null : normalizeOrgTag(tagId.trim());
+    }
     
     /**
      * 设置用户的主组织标签
@@ -410,18 +477,19 @@ public class UserService {
     public void setUserPrimaryOrg(String username, String primaryOrg) {
         User user = userRepository.findByUsername(username)
                 .orElseThrow(() -> new CustomException("User not found", HttpStatus.NOT_FOUND));
+        String normalizedPrimaryOrg = normalizeNullableOrgTag(primaryOrg);
         
         // 检查该组织标签是否已分配给用户
-        Set<String> userTags = Arrays.stream(user.getOrgTags().split(",")).collect(Collectors.toSet());
-        if (!userTags.contains(primaryOrg)) {
+        Set<String> userTags = new HashSet<>(parseOrgTags(user.getOrgTags()));
+        if (!userTags.contains(normalizedPrimaryOrg)) {
             throw new CustomException("Organization tag not assigned to user", HttpStatus.BAD_REQUEST);
         }
         
-        user.setPrimaryOrg(primaryOrg);
+        user.setPrimaryOrg(normalizedPrimaryOrg);
         userRepository.save(user);
         
         // 更新缓存
-        orgTagCacheService.cacheUserPrimaryOrg(username, primaryOrg);
+        orgTagCacheService.cacheUserPrimaryOrg(username, normalizedPrimaryOrg);
     }
     
     /**
@@ -447,16 +515,17 @@ public class UserService {
         
         // 尝试从缓存获取
         String primaryOrg = orgTagCacheService.getUserPrimaryOrg(username);
+        primaryOrg = normalizeNullableOrgTag(primaryOrg);
         
         // 如果缓存中没有，则从数据库获取
         if (primaryOrg == null || primaryOrg.isEmpty()) {
-            primaryOrg = user.getPrimaryOrg();
+            primaryOrg = normalizeNullableOrgTag(user.getPrimaryOrg());
             
             // 如果用户没有设置主组织标签，则尝试使用第一个分配的组织标签
             if (primaryOrg == null || primaryOrg.isEmpty()) {
-                String[] tags = user.getOrgTags().split(",");
-                if (tags.length > 0) {
-                    primaryOrg = tags[0];
+                List<String> tags = parseOrgTags(user.getOrgTags());
+                if (!tags.isEmpty()) {
+                    primaryOrg = tags.get(0);
                     // 更新用户的主组织标签
                     user.setPrimaryOrg(primaryOrg);
                     userRepository.save(user);
@@ -467,6 +536,10 @@ public class UserService {
             }
             
             // 更新缓存
+            orgTagCacheService.cacheUserPrimaryOrg(username, primaryOrg);
+        } else if (!primaryOrg.equals(user.getPrimaryOrg())) {
+            user.setPrimaryOrg(primaryOrg);
+            userRepository.save(user);
             orgTagCacheService.cacheUserPrimaryOrg(username, primaryOrg);
         }
         
@@ -803,4 +876,3 @@ public class UserService {
         return result;
     }
 }
-

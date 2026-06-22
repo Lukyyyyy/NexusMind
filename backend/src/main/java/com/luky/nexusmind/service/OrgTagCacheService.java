@@ -13,7 +13,7 @@ import java.util.List;
 import java.util.Set;
 import java.util.HashSet;
 import java.util.ArrayList;
-import java.util.Collections;
+import java.util.LinkedHashSet;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
@@ -30,7 +30,9 @@ public class OrgTagCacheService {
     private static final String USER_PRIMARY_ORG_KEY_PREFIX = "user:primary_org:";
     private static final String USER_EFFECTIVE_TAGS_KEY_PREFIX = "user:effective_org_tags:";
     private static final long CACHE_TTL_HOURS = 24;
-    private static final String DEFAULT_ORG_TAG = "DEFAULT";
+    private static final String DEFAULT_ORG_TAG = "default";
+    private static final String LEGACY_DEFAULT_ORG_TAG = "DEFAULT";
+    private static final String DEFAULT_ORG_NAME = "默认组织";
     
     @Autowired
     private RedisTemplate<String, Object> redisTemplate;
@@ -47,7 +49,11 @@ public class OrgTagCacheService {
     public void cacheUserOrgTags(String username, List<String> orgTags) {
         try {
             String key = USER_ORG_TAGS_KEY_PREFIX + username;
-            redisTemplate.opsForList().rightPushAll(key, orgTags.toArray());
+            List<String> normalizedTags = normalizeOrgTags(orgTags);
+            redisTemplate.delete(key);
+            if (!normalizedTags.isEmpty()) {
+                redisTemplate.opsForList().rightPushAll(key, normalizedTags.toArray());
+            }
             redisTemplate.expire(key, CACHE_TTL_HOURS, TimeUnit.HOURS);
             logger.debug("Cached organization tags for user: {}", username);
         } catch (Exception e) {
@@ -69,7 +75,7 @@ public class OrgTagCacheService {
             if (result != null && !result.isEmpty()) {
                 return result.stream()
                         .map(obj -> (String) obj)
-                        .toList();
+                        .collect(Collectors.collectingAndThen(Collectors.toList(), this::normalizeOrgTags));
             }
         } catch (Exception e) {
             logger.error("Failed to get organization tags for user: {}", username, e);
@@ -126,6 +132,24 @@ public class OrgTagCacheService {
             logger.error("Failed to delete organization tags cache for user: {}", username, e);
         }
     }
+
+    private List<String> normalizeOrgTags(List<String> orgTags) {
+        if (orgTags == null || orgTags.isEmpty()) {
+            return List.of();
+        }
+
+        return orgTags.stream()
+                .map(String::trim)
+                .filter(tag -> !tag.isEmpty())
+                .map(this::normalizeOrgTag)
+                .collect(Collectors.toCollection(LinkedHashSet::new))
+                .stream()
+                .toList();
+    }
+
+    private String normalizeOrgTag(String tagId) {
+        return LEGACY_DEFAULT_ORG_TAG.equals(tagId) || DEFAULT_ORG_NAME.equals(tagId) ? DEFAULT_ORG_TAG : tagId;
+    }
     
     /**
      * 获取用户的有效标签权限集合（包含用户直接拥有的标签及其所有父标签）
@@ -144,10 +168,7 @@ public class OrgTagCacheService {
                         .map(Object::toString)
                         .collect(Collectors.toList());
                 
-                // 确保默认标签在结果中（从缓存读取的情况）
-                if (!effectiveTags.contains(DEFAULT_ORG_TAG)) {
-                    effectiveTags.add(DEFAULT_ORG_TAG);
-                }
+                addDefaultOrgTags(effectiveTags);
                 
                 return effectiveTags;
             }
@@ -166,8 +187,9 @@ public class OrgTagCacheService {
                 }
             }
             
-            // 确保默认标签在结果中
+            // 确保默认标签在结果中；保留大写旧标签以兼容历史文档
             allEffectiveTags.add(DEFAULT_ORG_TAG);
+            allEffectiveTags.add(LEGACY_DEFAULT_ORG_TAG);
             
             List<String> result = new ArrayList<>(allEffectiveTags);
             
@@ -181,7 +203,16 @@ public class OrgTagCacheService {
         } catch (Exception e) {
             logger.error("Failed to get effective organization tags for user: {}", username, e);
             // 错误情况下至少返回默认标签
-            return Collections.singletonList(DEFAULT_ORG_TAG);
+            return List.of(DEFAULT_ORG_TAG, LEGACY_DEFAULT_ORG_TAG);
+        }
+    }
+
+    private void addDefaultOrgTags(List<String> effectiveTags) {
+        if (!effectiveTags.contains(DEFAULT_ORG_TAG)) {
+            effectiveTags.add(DEFAULT_ORG_TAG);
+        }
+        if (!effectiveTags.contains(LEGACY_DEFAULT_ORG_TAG)) {
+            effectiveTags.add(LEGACY_DEFAULT_ORG_TAG);
         }
     }
     
@@ -229,4 +260,4 @@ public class OrgTagCacheService {
             logger.error("Failed to invalidate effective organization tags cache", e);
         }
     }
-} 
+}

@@ -47,6 +47,9 @@ public class DocumentService {
 
     private static final Logger logger = LoggerFactory.getLogger(DocumentService.class);
     private static final int MAX_PREVIEW_CHARS = 20000;
+    private static final String DEFAULT_ORG_TAG = "default";
+    private static final String LEGACY_DEFAULT_ORG_TAG = "DEFAULT";
+    private static final String DEFAULT_ORG_NAME = "默认组织";
 
     @Autowired
     private FileUploadRepository fileUploadRepository;
@@ -152,7 +155,7 @@ public class DocumentService {
                     .orElseThrow(() -> new RuntimeException("用户不存在: " + userId));
             List<String> ownerIds = buildOwnerIdentifiers(user, userId);
             
-            List<String> userEffectiveTags = orgTagCacheService.getUserEffectiveOrgTags(user.getUsername());
+            List<String> userEffectiveTags = withDefaultOrgAliases(orgTagCacheService.getUserEffectiveOrgTags(user.getUsername()));
             logger.debug("用户有效组织标签: {}", userEffectiveTags);
             
             // 使用有效标签查询文件
@@ -200,6 +203,20 @@ public class DocumentService {
         ownerIds.add(user.getId().toString());
         ownerIds.add(user.getUsername());
         return new ArrayList<>(ownerIds);
+    }
+
+    private List<String> withDefaultOrgAliases(List<String> orgTags) {
+        Set<String> normalizedTags = new LinkedHashSet<>();
+        if (orgTags != null) {
+            orgTags.stream()
+                    .map(String::trim)
+                    .filter(tag -> !tag.isEmpty())
+                    .forEach(normalizedTags::add);
+        }
+        normalizedTags.add(DEFAULT_ORG_TAG);
+        normalizedTags.add(LEGACY_DEFAULT_ORG_TAG);
+        normalizedTags.add(DEFAULT_ORG_NAME);
+        return new ArrayList<>(normalizedTags);
     }
     
     /**

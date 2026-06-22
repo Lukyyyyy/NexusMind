@@ -39,7 +39,9 @@ import java.util.stream.Collectors;
 public class OrgTagAuthorizationFilter extends OncePerRequestFilter {
 
     private static final Logger logger = LoggerFactory.getLogger(OrgTagAuthorizationFilter.class);
-    private static final String DEFAULT_ORG_TAG = "DEFAULT"; // 默认组织标签
+    private static final String DEFAULT_ORG_TAG = "default"; // 默认组织标签
+    private static final String LEGACY_DEFAULT_ORG_TAG = "DEFAULT"; // 旧版默认组织标签
+    private static final String DEFAULT_ORG_NAME = "默认组织"; // 历史数据可能存了展示名
     private static final String PRIVATE_TAG_PREFIX = "PRIVATE_"; // 私人组织标签前缀
 
     @Autowired
@@ -61,6 +63,7 @@ public class OrgTagAuthorizationFilter extends OncePerRequestFilter {
                 path.matches(".*/upload/merge.*") || 
                 path.matches(".*/upload/status.*") || 
                 path.matches(".*/documents/uploads.*") ||
+                path.matches(".*/documents/accessible.*") ||
                 path.matches(".*/documents/[a-fA-F0-9]{32}/chunks.*") ||
                 path.matches(".*/search/hybrid.*") ||
                 (path.matches(".*/documents/[a-fA-F0-9]{32}.*") && "DELETE".equals(request.getMethod()))) {
@@ -74,6 +77,8 @@ public class OrgTagAuthorizationFilter extends OncePerRequestFilter {
                     operation = "查询上传状态";
                 } else if (path.contains("/uploads")) {
                     operation = "获取用户文档";
+                } else if (path.contains("/accessible")) {
+                    operation = "获取可访问文档";
                 } else if (path.contains("/chunks")) {
                     operation = "查看文档切片";
                 } else if (path.contains("/search/hybrid")) {
@@ -142,7 +147,7 @@ public class OrgTagAuthorizationFilter extends OncePerRequestFilter {
             if (resourceInfo.isPublic() || 
                 resourceOrgTag == null || 
                 resourceOrgTag.isEmpty() || 
-                DEFAULT_ORG_TAG.equals(resourceOrgTag)) {
+                isDefaultOrg(resourceOrgTag)) {
                 logger.debug("资源是公开的或无组织标签或属于默认组织，放行请求");
                 filterChain.doFilter(request, response);
                 return;
@@ -309,12 +314,24 @@ public class OrgTagAuthorizationFilter extends OncePerRequestFilter {
      * 检查用户是否有权限访问该资源
      */
     private boolean isUserAuthorized(String userOrgTags, String resourceOrgTag) {
+        if (isDefaultOrg(resourceOrgTag)) {
+            return true;
+        }
+
         // 将用户的组织标签字符串转换为集合
         Set<String> userTags = Arrays.stream(userOrgTags.split(","))
+                .map(String::trim)
+                .filter(tag -> !tag.isEmpty())
                 .collect(Collectors.toSet());
         
         // 检查用户的组织标签是否包含资源的组织标签
         return userTags.contains(resourceOrgTag);
+    }
+
+    private boolean isDefaultOrg(String orgTag) {
+        return DEFAULT_ORG_TAG.equalsIgnoreCase(orgTag)
+                || LEGACY_DEFAULT_ORG_TAG.equals(orgTag)
+                || DEFAULT_ORG_NAME.equals(orgTag);
     }
     
     /**
