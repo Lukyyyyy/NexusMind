@@ -6,6 +6,7 @@ import { fetchLangfuseOverview, fetchLangfuseTraceDetail, fetchLangfuseTraces } 
 
 type RangePreset = '1h' | '24h' | '7d' | 'custom';
 
+const appStore = useAppStore();
 const preset = ref<RangePreset>('24h');
 const customRange = ref<[number, number] | null>(null);
 const level = ref<string | null>(null);
@@ -258,7 +259,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="min-h-500px flex-col gap-16px overflow-auto pb-16px">
+  <div class="min-h-500px flex-col-stretch gap-16px overflow-hidden lt-sm:overflow-auto">
     <Teleport defer to="#header-extra">
       <div class="observability-filter-bar">
         <NRadioGroup v-model:value="preset" size="small">
@@ -319,7 +320,7 @@ onMounted(() => {
       </NGi>
     </NGrid>
 
-    <NCard title="最近 Trace" :bordered="false" size="small" class="trace-card">
+    <NCard title="最近 Trace" :bordered="false" size="small" class="sm:flex-1-hidden card-wrapper trace-card">
       <template #header-extra>
         <NSpace align="center" :wrap="false">
           <span class="text-12px text-#8a8f99">点击 Trace 名称或“详情”查看完整调用链路</span>
@@ -327,17 +328,18 @@ onMounted(() => {
         </NSpace>
       </template>
       <NDataTable
+        class="sm:h-full trace-table"
         :columns="columns"
         :data="traces"
         :loading="loading"
         :row-key="row => row.traceId"
         :scroll-x="1360"
+        :flex-height="!appStore.isMobile"
         size="small"
-        :max-height="360"
       />
     </NCard>
 
-    <NGrid cols="1 l:3" :x-gap="16" :y-gap="16" responsive="screen">
+    <NGrid cols="1 l:3" :x-gap="16" :y-gap="16" responsive="screen" class="shrink-0">
       <NGi span="1 l:2">
         <NCard title="调用趋势" :bordered="false" size="small" class="h-220px">
           <div v-if="overview?.trend?.length" class="trend-chart">
