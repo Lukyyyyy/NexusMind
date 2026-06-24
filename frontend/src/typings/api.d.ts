@@ -106,6 +106,97 @@ declare namespace Api {
     type List = Common.PaginatingQueryRecord<Item>;
   }
 
+  namespace Observability {
+    interface TimeRangeParams {
+      from: string;
+      to: string;
+    }
+
+    interface TraceListParams extends TimeRangeParams {
+      level?: string | null;
+      traceName?: string | null;
+      cursor?: string | null;
+      limit?: number;
+    }
+
+    interface ModelSummary {
+      model: string;
+      count: number;
+      totalTokens: number;
+      totalCost: number;
+    }
+
+    interface TrendPoint {
+      time: string;
+      count: number;
+      errorCount: number;
+      totalTokens: number;
+    }
+
+    interface Overview {
+      enabled: boolean;
+      message: string | null;
+      totalTraces: number;
+      totalObservations: number;
+      errorCount: number;
+      avgLatencyMs: number;
+      totalTokens: number;
+      totalCost: number;
+      byModel: ModelSummary[];
+      trend: TrendPoint[];
+    }
+
+    interface TraceItem {
+      traceId: string;
+      traceName: string;
+      startTime: string;
+      endTime: string;
+      durationMs: number;
+      level: string;
+      observationCount: number;
+      modelNames: string[];
+      totalTokens: number;
+      totalCost: number;
+    }
+
+    interface TraceList {
+      enabled: boolean;
+      message: string | null;
+      items: TraceItem[];
+      nextCursor: string | null;
+    }
+
+    interface Observation {
+      id: string;
+      traceId: string;
+      parentObservationId: string | null;
+      type: string;
+      name: string;
+      level: string;
+      statusMessage: string | null;
+      startTime: string;
+      endTime: string | null;
+      durationMs: number | null;
+      modelName: string | null;
+      totalTokens: number | null;
+      totalCost: number | null;
+      traceName: string | null;
+      sessionId: string | null;
+      metadata: Record<string, unknown>;
+      input: null;
+      output: null;
+    }
+
+    interface TraceDetail {
+      enabled: boolean;
+      message: string | null;
+      traceId: string;
+      traceName: string | null;
+      sessionId: string | null;
+      observations: Observation[];
+    }
+  }
+
   namespace KnowledgeBase {
     interface SearchParams {
       userId: string;

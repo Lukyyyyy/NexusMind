@@ -51,7 +51,7 @@ public class FileProcessingTask {
         this.filePath = filePath;
         this.fileName = fileName;
         this.userId = null;
-        this.orgTag = "DEFAULT";
+        this.orgTag = "default";
         this.isPublic = false;
         this.parseEngine = ParseEngine.AUTO;
         this.chunkSize = null;

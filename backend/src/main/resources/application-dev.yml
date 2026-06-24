@@ -128,7 +128,7 @@ langfuse:
     enabled: ${LANGFUSE_TRACING_ENABLED:false}
     base-url: ${LANGFUSE_BASE_URL:https://cloud.langfuse.com}
     public-key: ${LANGFUSE_PUBLIC_KEY:}
-    secret-key: ${JWT_SECRET_KEY:change-me-in-local-dev-only}
+    secret-key: ${LANGFUSE_SECRET_KEY:}
     environment: ${LANGFUSE_TRACING_ENVIRONMENT:dev}
     capture-content: ${LANGFUSE_CAPTURE_CONTENT:false}
 

@@ -240,7 +240,7 @@ public class ParseService {
      */
     public int parseAndSave(String fileMd5, InputStream fileStream) throws IOException, TikaException {
         // 使用默认值调用新方法
-        return parseAndSave(fileMd5, fileStream, "unknown", "DEFAULT", false);
+        return parseAndSave(fileMd5, fileStream, "unknown", "default", false);
     }
 
     private void checkMemoryThreshold() {

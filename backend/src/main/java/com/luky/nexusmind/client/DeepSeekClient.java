@@ -9,6 +9,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.ArrayList;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -59,6 +60,8 @@ public class DeepSeekClient {
         Map<String, Object> request = buildRequest(userMessage, context, history);
         AiTraceService.TraceSpan span = aiTraceService.startSpan(
                 "llm.deepseek.stream", userId, sessionId, conversationId)
+                .attribute("langfuse.observation.type", "generation")
+                .attribute("langfuse.observation.model.name", model)
                 .attribute("gen_ai.system", "deepseek")
                 .attribute("gen_ai.request.model", model)
                 .attribute("gen_ai.operation.name", "chat")
@@ -82,6 +85,7 @@ public class DeepSeekClient {
         }
 
         AtomicLong responseChars = new AtomicLong();
+        AtomicReference<Usage> usage = new AtomicReference<>();
 
         try {
             webClient.post()
@@ -94,15 +98,17 @@ public class DeepSeekClient {
                             chunk -> processChunk(chunk, content -> {
                                 responseChars.addAndGet(content.length());
                                 onChunk.accept(content);
-                            }),
+                            }, usage::set),
                             error -> {
                                 span.attribute("gen_ai.response.output_chars", responseChars.get());
+                                applyUsageAttributes(span, usage.get());
                                 span.error(error);
                                 span.end();
                                 onError.accept(error);
                             },
                             () -> {
                                 span.attribute("gen_ai.response.output_chars", responseChars.get());
+                                applyUsageAttributes(span, usage.get());
                                 span.end();
                                 onComplete.run();
                             });
@@ -127,6 +133,7 @@ public class DeepSeekClient {
         request.put("model", model);
         request.put("messages", buildMessages(userMessage, context, history));
         request.put("stream", true);
+        request.put("stream_options", Map.of("include_usage", true));
         // 生成参数
         AiProperties.Generation gen = aiProperties.getGeneration();
         if (gen.getTemperature() != null) {
@@ -188,7 +195,7 @@ public class DeepSeekClient {
         return messages;
     }
 
-    private void processChunk(String chunk, Consumer<String> onChunk) {
+    private void processChunk(String chunk, Consumer<String> onChunk, Consumer<Usage> onUsage) {
         try {
             // 检查是否是结束标记
             if ("[DONE]".equals(chunk)) {
@@ -199,6 +206,10 @@ public class DeepSeekClient {
             // 直接解析 JSON
             ObjectMapper mapper = new ObjectMapper();
             JsonNode node = mapper.readTree(chunk);
+            Usage usage = parseUsage(node.path("usage"));
+            if (usage != null) {
+                onUsage.accept(usage);
+            }
             String content = node.path("choices")
                     .path(0)
                     .path("delta")
@@ -210,6 +221,77 @@ public class DeepSeekClient {
             }
         } catch (Exception e) {
             logger.error("处理数据块时出错: {}", e.getMessage(), e);
+        }
+    }
+
+    private Usage parseUsage(JsonNode usageNode) {
+        if (usageNode == null || usageNode.isMissingNode() || usageNode.isNull()) {
+            return null;
+        }
+        return new Usage(
+                longOrNull(usageNode.path("prompt_tokens")),
+                longOrNull(usageNode.path("completion_tokens")),
+                longOrNull(usageNode.path("total_tokens")),
+                longOrNull(usageNode.path("prompt_cache_hit_tokens")),
+                longOrNull(usageNode.path("prompt_cache_miss_tokens")));
+    }
+
+    private void applyUsageAttributes(AiTraceService.TraceSpan span, Usage usage) {
+        if (usage == null) {
+            return;
+        }
+        if (usage.promptTokens() != null) {
+            span.attribute("gen_ai.usage.prompt_tokens", usage.promptTokens());
+            span.attribute("gen_ai.usage.input_tokens", usage.promptTokens());
+        }
+        if (usage.completionTokens() != null) {
+            span.attribute("gen_ai.usage.completion_tokens", usage.completionTokens());
+            span.attribute("gen_ai.usage.output_tokens", usage.completionTokens());
+        }
+        if (usage.totalTokens() != null) {
+            span.attribute("gen_ai.usage.total_tokens", usage.totalTokens());
+        }
+        if (usage.promptCacheHitTokens() != null) {
+            span.attribute("gen_ai.usage.prompt_cache_hit_tokens", usage.promptCacheHitTokens());
+        }
+        if (usage.promptCacheMissTokens() != null) {
+            span.attribute("gen_ai.usage.prompt_cache_miss_tokens", usage.promptCacheMissTokens());
+        }
+        span.attribute("langfuse.observation.usage_details", usage.toLangfuseUsageDetailsJson());
+    }
+
+    private static Long longOrNull(JsonNode node) {
+        if (node == null || node.isMissingNode() || node.isNull()) {
+            return null;
+        }
+        return node.asLong();
+    }
+
+    private record Usage(Long promptTokens,
+                         Long completionTokens,
+                         Long totalTokens,
+                         Long promptCacheHitTokens,
+                         Long promptCacheMissTokens) {
+        private String toLangfuseUsageDetailsJson() {
+            StringBuilder json = new StringBuilder("{");
+            boolean needsComma = appendJsonNumber(json, "input", promptTokens, false);
+            needsComma = appendJsonNumber(json, "output", completionTokens, needsComma);
+            needsComma = appendJsonNumber(json, "total", totalTokens, needsComma);
+            needsComma = appendJsonNumber(json, "prompt_cache_hit", promptCacheHitTokens, needsComma);
+            appendJsonNumber(json, "prompt_cache_miss", promptCacheMissTokens, needsComma);
+            json.append("}");
+            return json.toString();
+        }
+
+        private static boolean appendJsonNumber(StringBuilder json, String key, Long value, boolean needsComma) {
+            if (value == null) {
+                return needsComma;
+            }
+            if (needsComma) {
+                json.append(",");
+            }
+            json.append("\"").append(key).append("\":").append(value);
+            return true;
         }
     }
 

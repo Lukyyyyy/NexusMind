@@ -25,6 +25,7 @@ declare module "@elegant-router/types" {
     "iframe-page": "/iframe-page/:url";
     "knowledge-base": "/knowledge-base";
     "login": "/login/:module(pwd-login|code-login|register|reset-pwd|bind-wechat)?";
+    "observability": "/observability";
     "org-tag": "/org-tag";
     "personal-center": "/personal-center";
     "user": "/user";
@@ -67,6 +68,7 @@ declare module "@elegant-router/types" {
     | "iframe-page"
     | "knowledge-base"
     | "login"
+    | "observability"
     | "org-tag"
     | "personal-center"
     | "user"
@@ -94,6 +96,7 @@ declare module "@elegant-router/types" {
     | "chat-history"
     | "chat"
     | "knowledge-base"
+    | "observability"
     | "org-tag"
     | "personal-center"
     | "user"

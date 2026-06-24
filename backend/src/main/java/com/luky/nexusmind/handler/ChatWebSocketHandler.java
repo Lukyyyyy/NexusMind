@@ -92,14 +92,19 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
         String[] segments = path.split("/");
         String jwtToken = segments[segments.length - 1];
         
-        // 从JWT令牌中提取用户名
+        String userId = jwtUtils.extractUserIdFromToken(jwtToken);
+        if (userId != null && !userId.isBlank()) {
+            logger.debug("从JWT令牌中提取的用户ID: {}", userId);
+            return userId;
+        }
+
         String username = jwtUtils.extractUsernameFromToken(jwtToken);
         if (username == null) {
-            logger.warn("无法从JWT令牌中提取用户名，使用令牌作为用户ID: {}", jwtToken);
+            logger.warn("无法从JWT令牌中提取用户信息，使用令牌作为用户ID: {}", jwtToken);
             return jwtToken;
         }
         
-        logger.debug("从JWT令牌中提取的用户名: {}", username);
+        logger.debug("JWT令牌缺少用户ID，回退使用用户名: {}", username);
         return username;
     }
 

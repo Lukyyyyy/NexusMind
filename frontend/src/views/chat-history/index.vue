@@ -43,10 +43,18 @@ watchEffect(() => {
 async function getList() {
   if (!params.value.userid) return;
   loading.value = true;
-  const { error, data } = await request<Api.Chat.Message[]>({
-    url: 'admin/conversation',
-    params: params.value
-  });
+  const { error, data } = store.isAdmin
+    ? await request<Api.Chat.Message[]>({
+        url: 'admin/conversation',
+        params: params.value
+      })
+    : await request<Api.Chat.Message[]>({
+        url: 'users/conversation',
+        params: {
+          start_date: params.value.start_date,
+          end_date: params.value.end_date
+        }
+      });
   if (!error) {
     list.value = data;
     scrollToBottom();
@@ -60,7 +68,7 @@ async function getList() {
     <Teleport defer to="#header-extra">
       <div class="px-10">
         <NForm :model="params" label-placement="left" :show-feedback="false" inline>
-          <NFormItem label="用户">
+          <NFormItem v-if="store.isAdmin" label="用户">
             <TheSelect
               v-model:value="userId"
               url="admin/users/list"

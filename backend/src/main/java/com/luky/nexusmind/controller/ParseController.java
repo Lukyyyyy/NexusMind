@@ -27,7 +27,7 @@ public class ParseController {
                     fileMd5, file.getOriginalFilename(), file.getSize());
             
             parseService.parseAndSave(fileMd5, file.getInputStream(),
-                    userId != null ? userId : "unknown", "DEFAULT", false,
+                    userId != null ? userId : "unknown", "default", false,
                     ParseEngine.fromNullable(parseEngine), file.getOriginalFilename());
             
             LogUtils.logFileOperation(userId != null ? userId : "system", "PARSE", 

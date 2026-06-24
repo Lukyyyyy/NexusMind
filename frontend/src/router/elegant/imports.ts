@@ -23,6 +23,7 @@ export const views: Record<LastLevelRouteKey, RouteComponent | (() => Promise<Ro
   "chat-history": () => import("@/views/chat-history/index.vue"),
   chat: () => import("@/views/chat/index.vue"),
   "knowledge-base": () => import("@/views/knowledge-base/index.vue"),
+  observability: () => import("@/views/observability/index.vue"),
   "org-tag": () => import("@/views/org-tag/index.vue"),
   "personal-center": () => import("@/views/personal-center/index.vue"),
   user: () => import("@/views/user/index.vue"),

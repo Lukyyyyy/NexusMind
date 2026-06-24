@@ -46,12 +46,25 @@ if [[ "$NO_INFRA" != true ]]; then
   fi
 fi
 
+kill_backend_listeners() {
+  local pids pid
+  pids="$(lsof -tiTCP:"$BACKEND_PORT" -sTCP:LISTEN 2>/dev/null || true)"
+  if [[ -z "$pids" ]]; then
+    return 0
+  fi
+
+  for pid in $pids; do
+    kill "$pid" 2>/dev/null || true
+  done
+}
+
 cleanup() {
   local pids
   pids="$(jobs -p)"
   if [[ -n "$pids" ]]; then
     kill $pids 2>/dev/null || true
   fi
+  kill_backend_listeners
 }
 trap cleanup EXIT INT TERM
 

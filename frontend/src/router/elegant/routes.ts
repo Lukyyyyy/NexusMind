@@ -56,7 +56,6 @@ export const generatedRoutes: GeneratedRoute[] = [
     meta: {
       title: 'chat-history',
       i18nKey: 'route.chat-history',
-      roles: ['ADMIN'],
       icon: 'solar:hashtag-chat-broken',
       order: 2
     }
@@ -98,6 +97,17 @@ export const generatedRoutes: GeneratedRoute[] = [
     }
   },
   {
+    name: 'observability',
+    path: '/observability',
+    component: 'layout.base$view.observability',
+    meta: {
+      title: 'observability',
+      i18nKey: 'route.observability',
+      icon: 'solar:chart-2-line-duotone',
+      order: 6
+    }
+  },
+  {
     name: 'org-tag',
     path: '/org-tag',
     component: 'layout.base$view.org-tag',
@@ -117,7 +127,7 @@ export const generatedRoutes: GeneratedRoute[] = [
       title: 'personal-center',
       i18nKey: 'route.personal-center',
       icon: 'solar:people-nearby-line-duotone',
-      order: 6
+      order: 7
     }
   },
   {
