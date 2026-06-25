@@ -48,11 +48,23 @@ public class ChatHandler {
     }
 
     public void processMessage(String userId, String userMessage, WebSocketSession session) {
+        processMessage(userId, userMessage, session, userId);
+    }
+
+    public void processMessage(String userId, String userMessage, WebSocketSession session, String traceUserId) {
         Long chatSessionId = chatSessionService.createSession(userId).getId();
-        processMessage(userId, chatSessionId, userMessage, session);
+        processMessage(userId, chatSessionId, userMessage, session, traceUserId);
     }
 
     public void processMessage(String userId, Long chatSessionId, String userMessage, WebSocketSession session) {
+        processMessage(userId, chatSessionId, userMessage, session, userId);
+    }
+
+    public void processMessage(String userId,
+                               Long chatSessionId,
+                               String userMessage,
+                               WebSocketSession session,
+                               String traceUserId) {
         logger.info("开始处理消息，用户ID: {}, 会话ID: {}", userId, session.getId());
         AiTraceService.TraceSpan traceSpan = AiTraceService.TraceSpan.noop();
         AtomicBoolean traceFinished = new AtomicBoolean(false);
@@ -60,8 +72,9 @@ public class ChatHandler {
             // 1. 校验并使用显式会话 ID
             chatSessionService.getOwnedActiveSession(userId, chatSessionId);
             String conversationId = String.valueOf(chatSessionId);
+            String effectiveTraceUserId = hasText(traceUserId) ? traceUserId : userId;
             logger.info("会话ID: {}, 用户ID: {}", conversationId, userId);
-            traceSpan = aiTraceService.startSpan("rag.chat", userId, session.getId(), conversationId)
+            traceSpan = aiTraceService.startSpan("rag.chat", effectiveTraceUserId, session.getId(), conversationId)
                     .attribute("nexusmind.input.length", userMessage != null ? userMessage.length() : 0);
             if (aiTraceService.shouldCaptureContent()) {
                 traceSpan.attribute("input.value", abbreviate(userMessage, 2000));
@@ -79,7 +92,7 @@ public class ChatHandler {
             // 3. 执行带权限过滤的混合搜索
             List<SearchResult> searchResults;
             AiTraceService.TraceSpan searchSpan = aiTraceService.startSpan(
-                    "rag.hybrid_search", userId, session.getId(), conversationId)
+                    "rag.hybrid_search", effectiveTraceUserId, session.getId(), conversationId)
                     .attribute("nexusmind.search.top_k", 5)
                     .attribute("nexusmind.search.query.length", userMessage != null ? userMessage.length() : 0);
             try {
@@ -98,7 +111,7 @@ public class ChatHandler {
             // 4. 构建上下文
             String context;
             AiTraceService.TraceSpan contextSpan = aiTraceService.startSpan(
-                    "rag.context.build", userId, session.getId(), conversationId)
+                    "rag.context.build", effectiveTraceUserId, session.getId(), conversationId)
                     .attribute("nexusmind.search.results.count", searchResults.size());
             try {
                 context = buildContext(searchResults);
@@ -117,7 +130,7 @@ public class ChatHandler {
             // 5. 调用 DeepSeek API 并处理流式响应
             logger.info("调用DeepSeek API生成回复");
             deepSeekClient.streamResponse(userMessage, context, history, 
-                userId,
+                effectiveTraceUserId,
                 session.getId(),
                 conversationId,
                 chunk -> {
@@ -305,6 +318,10 @@ public class ChatHandler {
             return value;
         }
         return value.substring(0, maxLength) + "...";
+    }
+
+    private boolean hasText(String value) {
+        return value != null && !value.trim().isEmpty();
     }
 
     /**
