@@ -132,7 +132,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <main class="min-w-0 flex flex-1 flex-col">
+  <main class="relative min-w-0 flex flex-1 flex-col">
     <div class="flex h-52px shrink-0 items-center justify-between b-b b-#e5e7eb bg-white px-5 dark:b-#2b2b31 dark:bg-#18181c">
       <NText strong class="truncate">{{ activeSession?.title || '新会话' }}</NText>
       <div class="flex items-center text-18px color-gray-500">
@@ -143,7 +143,7 @@ onMounted(() => {
       </div>
     </div>
 
-    <NScrollbar ref="scrollbarRef" class="min-h-0 flex-1 px-6 py-5">
+    <NScrollbar ref="scrollbarRef" class="min-h-0 flex-1 px-6 pb-24 pt-5">
       <NSpin :show="loading">
         <VueMarkdownItProvider>
           <ChatMessage v-for="(item, index) in messages" :key="item.id || index" :msg="item" />
@@ -152,22 +152,37 @@ onMounted(() => {
       </NSpin>
     </NScrollbar>
 
-    <div class="shrink-0 b-t b-#e5e7eb bg-white p-4 dark:b-#2b2b31 dark:bg-#18181c">
-      <textarea
-        ref="inputRef"
-        v-model.trim="input.message"
-        placeholder="给 知枢 发送消息"
-        class="min-h-72px w-full cursor-text resize-none rounded-6px b-1 b-#dcdfe6 bg-transparent px-3 py-2 color-#333 caret-[rgb(var(--primary-color))] outline-none dark:b-#33343a dark:color-#f1f1f1"
-        @keydown="handShortcut"
-      />
-      <div class="flex items-center justify-end pt-2">
-        <NButton :disabled="sendable" strong circle type="primary" @click="handleSend">
+    <div
+      class="pointer-events-none absolute inset-x-0 bottom-0 z-10 flex flex-col items-center bg-transparent px-4 pb-3"
+    >
+      <div
+        class="pointer-events-auto flex w-full max-w-920px items-center gap-3 rounded-24px bg-white px-5 py-3 ring-1 ring-#e5e7eb dark:bg-#18181c dark:ring-#2b2b31"
+      >
+        <textarea
+          ref="inputRef"
+          v-model.trim="input.message"
+          rows="1"
+          placeholder="有问题，尽管问"
+          class="h-24px min-h-24px flex-1 cursor-text resize-none overflow-y-auto bg-transparent p-0 text-16px leading-24px color-#333 caret-[rgb(var(--primary-color))] outline-none placeholder:color-#9ca3af dark:color-#f1f1f1 dark:placeholder:color-#6b7280"
+          @keydown="handShortcut"
+        />
+        <NButton
+          :disabled="sendable"
+          strong
+          circle
+          type="primary"
+          class="shrink-0"
+          @click="handleSend"
+        >
           <template #icon>
             <icon-material-symbols:stop-rounded v-if="isSending" />
             <icon-guidance:send v-else />
           </template>
         </NButton>
       </div>
+      <p class="pointer-events-none mt-3 text-center text-13px color-#9ca3af dark:color-#6b7280">
+        NexusMind 也可能会犯错。请核查重要信息。
+      </p>
     </div>
   </main>
 </template>
