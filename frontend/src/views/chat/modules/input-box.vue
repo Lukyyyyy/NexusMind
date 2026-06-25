@@ -1,9 +1,14 @@
 <script setup lang="ts">
+import type { NScrollbar } from 'naive-ui';
+import { VueMarkdownItProvider } from 'vue-markdown-shiki';
+import ChatMessage from './chat-message.vue';
+
 const chatStore = useChatStore();
-const { input, list, wsStatus, wsData } = storeToRefs(chatStore);
+const { input, messages, activeSession, loading, wsStatus, wsData } = storeToRefs(chatStore);
+const scrollbarRef = ref<InstanceType<typeof NScrollbar>>();
 
 const latestMessage = computed(() => {
-  return list.value[list.value.length - 1] ?? {};
+  return messages.value[messages.value.length - 1] ?? {};
 });
 
 const isSending = computed(() => {
@@ -13,21 +18,44 @@ const isSending = computed(() => {
 });
 
 const sendable = computed(
-  () => (!input.value.message && !isSending) || ['CLOSED', 'CONNECTING'].includes(wsStatus.value)
+  () => (!input.value.message && !isSending.value) || ['CLOSED', 'CONNECTING'].includes(wsStatus.value)
 );
 
 watch(wsData, val => {
+  if (!val) return;
   const data = JSON.parse(val);
-  const assistant = list.value[list.value.length - 1];
+  if (data.type === 'title_updated') {
+    chatStore.loadSessions();
+    return;
+  }
 
-  if (data.type === 'completion' && data.status === 'finished' && assistant.status !== 'error')
-    assistant.status = 'finished';
-  if (data.error) assistant.status = 'error';
-  else if (data.chunk) {
+  const assistant = messages.value[messages.value.length - 1];
+
+  if (data.type === 'completion' && data.status === 'finished') {
+    if (assistant?.role === 'assistant' && assistant.status !== 'error') {
+      assistant.status = 'finished';
+    }
+    chatStore.refreshActiveSessionMessages();
+  } else if (data.error) {
+    if (assistant) assistant.status = 'error';
+  } else if (data.chunk) {
+    if (!assistant) return;
     assistant.status = 'loading';
     assistant.content += data.chunk;
   }
+  scrollToBottom();
 });
+
+watch(() => [...messages.value], scrollToBottom);
+
+function scrollToBottom() {
+  setTimeout(() => {
+    scrollbarRef.value?.scrollBy({
+      top: 999999999999,
+      behavior: 'auto'
+    });
+  }, 80);
+}
 
 const handleSend = async () => {
   //  判断是否正在发送, 如果发送中，则停止ai继续响应
@@ -37,28 +65,41 @@ const handleSend = async () => {
 
     chatStore.wsSend(JSON.stringify({ type: 'stop', _internal_cmd_token: data.cmdToken }));
 
-    list.value[list.value.length - 1].status = 'finished';
-    if (!latestMessage.value.content) list.value.pop();
+    messages.value[messages.value.length - 1].status = 'finished';
+    if (!latestMessage.value.content) messages.value.pop();
     return;
   }
 
-  list.value.push({
-    content: input.value.message,
-    role: 'user'
+  const sessionId = await chatStore.ensureActiveSession();
+  if (!sessionId) return;
+
+  const content = input.value.message;
+  messages.value.push({
+    content,
+    role: 'user',
+    status: 'finished',
+    timestamp: new Date().toISOString()
   });
-  chatStore.wsSend(input.value.message);
-  list.value.push({
+  messages.value.push({
     content: '',
     role: 'assistant',
     status: 'pending'
   });
+  chatStore.wsSend(
+    JSON.stringify({
+      type: 'message',
+      sessionId,
+      content
+    } satisfies Api.Chat.SendPayload)
+  );
   input.value.message = '';
 };
 
-const inputRef = ref();
+const inputRef = ref<HTMLTextAreaElement>();
 // 手动插入换行符（确保所有浏览器兼容）
 const insertNewline = () => {
   const textarea = inputRef.value;
+  if (!textarea) return;
   const start = textarea.selectionStart;
   const end = textarea.selectionEnd;
 
@@ -84,32 +125,51 @@ const handShortcut = (e: KeyboardEvent) => {
     } else insertNewline();
   }
 };
+
+onMounted(() => {
+  chatStore.scrollToBottom = scrollToBottom;
+});
 </script>
 
 <template>
-  <div class="relative w-full b-1 b-#1c1c1c20 bg-#fff p-4 card-wrapper dark:bg-#1c1c1c">
-    <textarea
-      ref="inputRef"
-      v-model.trim="input.message"
-      placeholder="给 知枢 发送消息"
-      class="min-h-10 w-full cursor-text resize-none b-none bg-transparent color-#333 caret-[rgb(var(--primary-color))] outline-none dark:color-#f1f1f1"
-      @keydown="handShortcut"
-    />
-    <div class="flex items-center justify-between pt-2">
+  <main class="min-w-0 flex flex-1 flex-col">
+    <div class="flex h-52px shrink-0 items-center justify-between b-b b-#e5e7eb bg-white px-5 dark:b-#2b2b31 dark:bg-#18181c">
+      <NText strong class="truncate">{{ activeSession?.title || '新会话' }}</NText>
       <div class="flex items-center text-18px color-gray-500">
         <NText class="text-14px">连接状态：</NText>
         <icon-eos-icons:loading v-if="wsStatus === 'CONNECTING'" class="color-yellow" />
         <icon-fluent:plug-connected-checkmark-20-filled v-else-if="wsStatus === 'OPEN'" class="color-green" />
         <icon-tabler:plug-connected-x v-else class="color-red" />
       </div>
-      <NButton :disabled="sendable" strong circle type="primary" @click="handleSend">
-        <template #icon>
-          <icon-material-symbols:stop-rounded v-if="isSending" />
-          <icon-guidance:send v-else />
-        </template>
-      </NButton>
     </div>
-  </div>
+
+    <NScrollbar ref="scrollbarRef" class="min-h-0 flex-1 px-6 py-5">
+      <NSpin :show="loading">
+        <VueMarkdownItProvider>
+          <ChatMessage v-for="(item, index) in messages" :key="item.id || index" :msg="item" />
+        </VueMarkdownItProvider>
+        <NEmpty v-if="!messages.length" description="暂无消息" class="mt-30" />
+      </NSpin>
+    </NScrollbar>
+
+    <div class="shrink-0 b-t b-#e5e7eb bg-white p-4 dark:b-#2b2b31 dark:bg-#18181c">
+      <textarea
+        ref="inputRef"
+        v-model.trim="input.message"
+        placeholder="给 知枢 发送消息"
+        class="min-h-72px w-full cursor-text resize-none rounded-6px b-1 b-#dcdfe6 bg-transparent px-3 py-2 color-#333 caret-[rgb(var(--primary-color))] outline-none dark:b-#33343a dark:color-#f1f1f1"
+        @keydown="handShortcut"
+      />
+      <div class="flex items-center justify-end pt-2">
+        <NButton :disabled="sendable" strong circle type="primary" @click="handleSend">
+          <template #icon>
+            <icon-material-symbols:stop-rounded v-if="isSending" />
+            <icon-guidance:send v-else />
+          </template>
+        </NButton>
+      </div>
+    </div>
+  </main>
 </template>
 
 <style scoped></style>

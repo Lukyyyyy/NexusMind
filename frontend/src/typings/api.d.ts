@@ -336,13 +336,36 @@ declare namespace Api {
 
     interface Output {
       chunk: string;
+      type?: 'completion' | 'stop';
+      status?: 'finished';
+      sessionId?: number;
+      error?: string;
     }
 
     interface Conversation {
       conversationId: string;
     }
 
+    interface Session {
+      id: number;
+      title: string;
+      titleGenerated: boolean;
+      createdAt: string;
+      updatedAt: string;
+    }
+
+    interface SendPayload {
+      type: 'message';
+      sessionId: number;
+      content: string;
+    }
+
+    interface SessionUpdate {
+      title: string;
+    }
+
     interface Message {
+      id?: number;
       role: 'user' | 'assistant';
       content: string;
       status?: 'pending' | 'loading' | 'finished' | 'error';

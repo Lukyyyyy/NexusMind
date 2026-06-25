@@ -60,6 +60,17 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
                         chatHandler.stopResponse(userId, session);
                         return;
                     }
+                    if ("message".equals(messageType)) {
+                        Object sessionIdValue = jsonMessage.get("sessionId");
+                        String content = (String) jsonMessage.get("content");
+                        if (sessionIdValue == null || content == null || content.trim().isEmpty()) {
+                            sendErrorMessage(session, "消息内容或会话ID不能为空");
+                            return;
+                        }
+                        Long chatSessionId = Long.valueOf(String.valueOf(sessionIdValue));
+                        chatHandler.processMessage(userId, chatSessionId, content, session);
+                        return;
+                    }
                     
                     // 其他JSON消息当作普通消息处理
                     logger.debug("收到JSON格式的聊天消息，当作普通消息处理");
