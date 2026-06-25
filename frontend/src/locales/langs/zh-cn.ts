@@ -163,7 +163,7 @@ const local: App.I18n.Schema = {
     500: '服务器错误',
     'iframe-page': '外链页面',
     chat: '聊天助手',
-    'chat-history': '聊天记录',
+    'chat-history': '聊天审计',
     'knowledge-base': '知识库',
     'org-tag': '组织标签',
     user: '用户管理',

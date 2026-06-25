@@ -115,6 +115,50 @@ public class DeepSeekClient {
         }
     }
 
+    public String generateTitle(String userMessage, String assistantResponse) {
+        String prompt = """
+                请为下面这轮知识库问答生成一个 8 到 16 个汉字的会话标题。
+                只输出标题，不要输出标点、解释或引号。
+
+                用户问题：
+                %s
+
+                助手回答：
+                %s
+                """.formatted(abbreviate(userMessage, 800), abbreviate(assistantResponse, 800));
+        Map<String, Object> request = new java.util.HashMap<>();
+        request.put("model", model);
+        request.put("stream", false);
+        request.put("temperature", 0.2);
+        request.put("max_tokens", 32);
+        request.put("messages", List.of(
+                Map.of("role", "system", "content", "你是知枢 NexusMind 的会话标题生成器。"),
+                Map.of("role", "user", "content", prompt)
+        ));
+
+        try {
+            String response = webClient.post()
+                    .uri("/chat/completions")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .bodyValue(request)
+                    .retrieve()
+                    .bodyToMono(String.class)
+                    .block();
+            if (response == null || response.isBlank()) {
+                return null;
+            }
+            JsonNode node = new ObjectMapper().readTree(response);
+            return node.path("choices")
+                    .path(0)
+                    .path("message")
+                    .path("content")
+                    .asText(null);
+        } catch (Exception e) {
+            logger.warn("生成会话标题失败，将使用兜底标题: {}", e.getMessage());
+            return null;
+        }
+    }
+
     private Map<String, Object> buildRequest(String userMessage,
             String context,
             List<Map<String, String>> history) {

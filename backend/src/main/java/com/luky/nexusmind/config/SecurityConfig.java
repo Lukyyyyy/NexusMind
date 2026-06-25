@@ -68,7 +68,7 @@ public class SecurityConfig {
                             // 搜索接口 - 普通用户和管理员都可访问
                             .requestMatchers("/api/search/**").hasAnyRole("USER", "ADMIN")
                             // 聊天相关接口 - WebSocket停止Token获取 (允许匿名访问)
-                            .requestMatchers("/api/chat/websocket-token").permitAll()
+                            .requestMatchers("/api/v1/chat/websocket-token").permitAll()
                             // 管理员专属接口 - 知识库管理、系统状态、用户活动监控
                             .requestMatchers("/api/v1/admin/**").hasRole("ADMIN")
                             // 用户组织标签管理接口

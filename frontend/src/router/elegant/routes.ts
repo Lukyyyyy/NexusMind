@@ -54,7 +54,7 @@ export const generatedRoutes: GeneratedRoute[] = [
     path: '/chat-history',
     component: 'layout.base$view.chat-history',
     meta: {
-      title: 'chat-history',
+      title: 'chat-audit',
       i18nKey: 'route.chat-history',
       roles: ['ADMIN'],
       icon: 'solar:hashtag-chat-broken',
