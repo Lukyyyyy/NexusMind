@@ -134,18 +134,32 @@ public class DocumentController {
      * 
      * @param userId 当前用户ID
      * @param orgTags 用户所属组织标签
+     * @param orgTag 组织标签筛选，兼容旧单选参数
+     * @param filterOrgTags 组织标签多选筛选
+     * @param isPublic 公开状态筛选
      * @return 可访问的文件列表
      */
     @GetMapping("/accessible")
     public ResponseEntity<?> getAccessibleFiles(
             @RequestAttribute("userId") String userId,
-            @RequestAttribute("orgTags") String orgTags) {
+            @RequestAttribute("orgTags") String orgTags,
+            @RequestParam(required = false) String orgTag,
+            @RequestParam(required = false) List<String> filterOrgTags,
+            @RequestParam(required = false) Boolean isPublic) {
         
         LogUtils.PerformanceMonitor monitor = LogUtils.startPerformanceMonitor("GET_ACCESSIBLE_FILES");
         try {
-            LogUtils.logBusiness("GET_ACCESSIBLE_FILES", userId, "接收到获取可访问文件请求: orgTags=%s", orgTags);
+            LogUtils.logBusiness(
+                    "GET_ACCESSIBLE_FILES",
+                    userId,
+                    "接收到获取可访问文件请求: orgTags=%s, filterOrgTag=%s, isPublic=%s",
+                    orgTags,
+                    filterOrgTags == null || filterOrgTags.isEmpty() ? orgTag : filterOrgTags,
+                    isPublic
+            );
             
             List<FileUpload> files = documentService.getAccessibleFiles(userId, orgTags);
+            files = filterAccessibleFiles(files, orgTag, filterOrgTags, isPublic);
             List<Map<String, Object>> fileData = toFileDtos(files, userId);
             
             LogUtils.logUserOperation(userId, "GET_ACCESSIBLE_FILES", "file_list", "SUCCESS");
@@ -165,6 +179,33 @@ public class DocumentController {
             response.put("message", "获取可访问文件列表失败: " + e.getMessage());
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
         }
+    }
+
+    private List<FileUpload> filterAccessibleFiles(List<FileUpload> files, String orgTag, List<String> filterOrgTags, Boolean isPublic) {
+        List<String> normalizedOrgTags = normalizeOrgTagFilters(orgTag, filterOrgTags);
+
+        return files.stream()
+                .filter(file -> normalizedOrgTags.isEmpty() || normalizedOrgTags.contains(file.getOrgTag()))
+                .filter(file -> isPublic == null || file.isPublic() == isPublic)
+                .collect(Collectors.toList());
+    }
+
+    private List<String> normalizeOrgTagFilters(String orgTag, List<String> filterOrgTags) {
+        if (filterOrgTags != null && !filterOrgTags.isEmpty()) {
+            return filterOrgTags.stream()
+                    .filter(tag -> tag != null && !tag.isBlank())
+                    .flatMap(tag -> List.of(tag.split(",")).stream())
+                    .filter(tag -> tag != null && !tag.isBlank())
+                    .map(String::trim)
+                    .distinct()
+                    .collect(Collectors.toList());
+        }
+
+        if (orgTag == null || orgTag.isBlank()) {
+            return List.of();
+        }
+
+        return List.of(orgTag.trim());
     }
     
     /**
@@ -215,6 +256,7 @@ public class DocumentController {
             dto.put("userId", file.getUserId());
             dto.put("uploaderName", resolveUploaderName(file.getUserId()));
             dto.put("public", file.isPublic());
+            dto.put("orgTag", file.getOrgTag());
             dto.put("createdAt", file.getCreatedAt());
             dto.put("mergedAt", file.getMergedAt());
 

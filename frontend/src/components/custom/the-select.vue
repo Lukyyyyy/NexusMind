@@ -7,7 +7,7 @@ defineOptions({
   inheritAttrs: false
 });
 
-const model = defineModel<string | number | null>('value', { required: true });
+const model = defineModel<string | number | Array<string | number> | null>('value', { required: true });
 
 const opts = ref<Array<SelectOption | SelectGroupOption>>([]);
 

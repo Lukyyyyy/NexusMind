@@ -66,7 +66,7 @@ class DocumentControllerTest {
         ReflectionTestUtils.setField(controller, "organizationTagRepository", proxy(OrganizationTagRepository.class, (proxy, method, args) -> Optional.empty()));
         ReflectionTestUtils.setField(controller, "userRepository", fixedUsers());
 
-        ResponseEntity<?> response = controller.getAccessibleFiles("2", "default,PRIVATE_Jack");
+        ResponseEntity<?> response = controller.getAccessibleFiles("2", "default,PRIVATE_Jack", null, null, null);
 
         @SuppressWarnings("unchecked")
         Map<String, Object> body = (Map<String, Object>) response.getBody();
@@ -76,6 +76,81 @@ class DocumentControllerTest {
         Map<String, Object> row = rows.get(0);
         assertEquals(ParseEngine.MINERU, row.get("actualParseEngine"));
         assertNotNull(row.get("processingDurationMillis"));
+    }
+
+    @Test
+    void accessibleFilesCanBeFilteredByOrgTagAndPublicState() {
+        FileUpload defaultPublicFile = file("default-file.pdf", "default", true);
+        FileUpload audioPublicFile = file("audio-public.pdf", "audio", true);
+        FileUpload audioPrivateFile = file("audio-private.pdf", "audio", false);
+
+        DocumentController controller = new DocumentController();
+        ReflectionTestUtils.setField(
+                controller,
+                "documentService",
+                new FixedDocumentService(List.of(defaultPublicFile, audioPublicFile, audioPrivateFile))
+        );
+        ReflectionTestUtils.setField(controller, "processingStatusService", new OwnerScopedProcessingStatusService(null));
+        ReflectionTestUtils.setField(controller, "processingStatusEventService", new ProcessingStatusEventService());
+        ReflectionTestUtils.setField(controller, "documentVectorRepository", proxy(DocumentVectorRepository.class, (proxy, method, args) -> 0L));
+        ReflectionTestUtils.setField(controller, "elasticsearchService", new ElasticsearchService());
+        ReflectionTestUtils.setField(controller, "organizationTagRepository", proxy(OrganizationTagRepository.class, (proxy, method, args) -> Optional.empty()));
+        ReflectionTestUtils.setField(controller, "userRepository", fixedUsers());
+
+        ResponseEntity<?> response = controller.getAccessibleFiles("2", "default,audio", "audio", null, false);
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> body = (Map<String, Object>) response.getBody();
+        assertNotNull(body);
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> rows = (List<Map<String, Object>>) body.get("data");
+        assertEquals(1, rows.size());
+        assertEquals("audio-private.pdf", rows.get(0).get("fileName"));
+        assertEquals("audio", rows.get(0).get("orgTag"));
+        assertEquals(false, rows.get(0).get("public"));
+    }
+
+    @Test
+    void accessibleFilesCanBeFilteredByMultipleOrgTags() {
+        FileUpload defaultFile = file("default-file.pdf", "default", true);
+        FileUpload audioFile = file("audio-file.pdf", "audio", true);
+        FileUpload visionFile = file("vision-file.pdf", "vision", true);
+
+        DocumentController controller = new DocumentController();
+        ReflectionTestUtils.setField(
+                controller,
+                "documentService",
+                new FixedDocumentService(List.of(defaultFile, audioFile, visionFile))
+        );
+        ReflectionTestUtils.setField(controller, "processingStatusService", new OwnerScopedProcessingStatusService(null));
+        ReflectionTestUtils.setField(controller, "processingStatusEventService", new ProcessingStatusEventService());
+        ReflectionTestUtils.setField(controller, "documentVectorRepository", proxy(DocumentVectorRepository.class, (proxy, method, args) -> 0L));
+        ReflectionTestUtils.setField(controller, "elasticsearchService", new ElasticsearchService());
+        ReflectionTestUtils.setField(controller, "organizationTagRepository", proxy(OrganizationTagRepository.class, (proxy, method, args) -> Optional.empty()));
+        ReflectionTestUtils.setField(controller, "userRepository", fixedUsers());
+
+        ResponseEntity<?> response = controller.getAccessibleFiles("2", "default,audio,vision", null, List.of("default", "audio"), null);
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> body = (Map<String, Object>) response.getBody();
+        assertNotNull(body);
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> rows = (List<Map<String, Object>>) body.get("data");
+        assertEquals(2, rows.size());
+        assertEquals(List.of("default-file.pdf", "audio-file.pdf"), rows.stream().map(row -> row.get("fileName")).toList());
+    }
+
+    private static FileUpload file(String fileName, String orgTag, boolean isPublic) {
+        FileUpload file = new FileUpload();
+        file.setFileMd5(String.format("%032x", fileName.hashCode()));
+        file.setFileName(fileName);
+        file.setTotalSize(1024L);
+        file.setStatus(1);
+        file.setUserId("1");
+        file.setPublic(isPublic);
+        file.setOrgTag(orgTag);
+        file.setCreatedAt(LocalDateTime.now());
+        return file;
     }
 
     private static UserRepository fixedUsers() {
@@ -121,6 +196,9 @@ class DocumentControllerTest {
 
         @Override
         public Map<String, FileProcessingStatus> findLatestByFileMd5(Collection<String> fileMd5List, String userId) {
+            if (status == null) {
+                return Map.of();
+            }
             if (!status.getUserId().equals(userId) || !fileMd5List.contains(status.getFileMd5())) {
                 return Map.of();
             }

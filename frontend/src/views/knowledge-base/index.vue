@@ -14,6 +14,7 @@ import SearchDialog from './modules/search-dialog.vue';
 import ChunkDialog from './modules/chunk-dialog.vue';
 
 const appStore = useAppStore();
+const authStore = useAuthStore();
 
 // 文件预览相关状态
 const previewVisible = ref(false);
@@ -27,14 +28,30 @@ type ActiveSortState = {
   columnKey: SortableColumnKey;
   order: Exclude<DataTableSortState['order'], false>;
 };
+type KnowledgeBaseListParams = CommonType.RecordNullable<
+  Api.Common.CommonSearchParams & {
+    filterOrgTags: string;
+    isPublic: boolean;
+  }
+>;
+
+const visibilityOptions = [
+  { label: '全部', value: 'all' },
+  { label: '公开', value: 'public' },
+  { label: '私有', value: 'private' }
+];
+const orgTagFilter = ref<Array<string | number>>([]);
+const visibilityFilter = ref<'all' | 'public' | 'private'>('all');
+const selectedOrgTagNames = ref<Record<string, string>>({});
+const orgTagOptions = ref<Api.OrgTag.Item[]>([]);
 
 const sortState = ref<ActiveSortState>({
   columnKey: 'createdAt',
   order: 'descend'
 });
 
-function apiFn() {
-  return fakePaginationRequest<Api.KnowledgeBase.List>({ url: '/documents/accessible' });
+function apiFn(params: KnowledgeBaseListParams) {
+  return fakePaginationRequest<Api.KnowledgeBase.List>({ url: '/documents/accessible', params });
 }
 
 function renderIcon(fileName: string) {
@@ -101,8 +118,22 @@ function confirmDelete(row: Api.KnowledgeBase.UploadTask) {
   });
 }
 
-const { columns, columnChecks, data, getData, loading, reloadColumns } = useTable({
+const {
+  columns,
+  columnChecks,
+  data,
+  getData,
+  getDataByPage,
+  loading,
+  reloadColumns,
+  searchParams,
+  resetSearchParams
+} = useTable({
   apiFn,
+  apiParams: {
+    filterOrgTags: null,
+    isPublic: null
+  },
   immediate: false,
   columns: () => [
     {
@@ -153,17 +184,7 @@ const { columns, columnChecks, data, getData, loading, reloadColumns } = useTabl
       key: 'uploaderName',
       title: '归属',
       width: 230,
-      render: row => (
-        <div class="leading-5">
-          <div class="text-14px text-#1f2937">{row.uploaderName || row.userId || '-'}</div>
-          <div class="mt-2px flex items-center gap-6px text-12px text-#8a8f99">
-            <NEllipsis tooltip style={{ maxWidth: '120px' }}>
-              {row.orgTagName || '默认组织'}
-            </NEllipsis>
-            {row.public || row.isPublic ? <NTag size="small" type="success">公开</NTag> : <NTag size="small" type="warning">私有</NTag>}
-          </div>
-        </div>
-      )
+      render: row => renderOwnership(row)
     },
     {
       key: 'createdAt',
@@ -220,11 +241,18 @@ const sortedTasks = computed(() => {
 
   return sorted;
 });
+const activeFilterCount = computed(() => {
+  let count = 0;
+  if (orgTagFilter.value.length > 0) count += 1;
+  if (visibilityFilter.value !== 'all') count += 1;
+  return count;
+});
 const isHttpProxy = import.meta.env.DEV && import.meta.env.VITE_HTTP_PROXY === 'Y';
 const { baseURL } = getServiceBaseURL(import.meta.env, isHttpProxy);
 let durationRefreshTimer: ReturnType<typeof setInterval> | null = null;
 let statusEventSource: EventSource | null = null;
 onMounted(async () => {
+  await loadOrgTagOptions();
   await getList();
   startProcessingStatusEvents();
   durationRefreshTimer = setInterval(() => {
@@ -241,6 +269,28 @@ onUnmounted(() => {
 watch(sortState, () => {
   reloadColumns();
 });
+
+async function loadOrgTagOptions() {
+  if (authStore.isAdmin) {
+    const { error, data } = await fetchGetOrgTagList();
+    if (!error) orgTagOptions.value = flattenOrgTags(data.data);
+    return;
+  }
+
+  const { error, data } = await request<Api.OrgTag.Mine>({ url: '/users/org-tags' });
+  if (!error) {
+    orgTagOptions.value = data.orgTagDetails.map(tag => ({
+      tagId: tag.tagId,
+      name: tag.name,
+      description: tag.description,
+      parentTag: null
+    }));
+  }
+}
+
+function flattenOrgTags(tags: Api.OrgTag.Item[] = []): Api.OrgTag.Item[] {
+  return tags.flatMap(tag => [tag, ...flattenOrgTags(tag.children || [])]);
+}
 
 function handleSorterUpdate(sorter: DataTableSortState | DataTableSortState[] | null) {
   const nextSorter = Array.isArray(sorter) ? sorter[0] : sorter;
@@ -292,34 +342,140 @@ function compareNullableNumbers(a: number | null | undefined, b: number | null |
 }
 
 /** 异步获取列表函数 该函数主要用于更新或初始化上传任务列表 它首先调用getData函数获取数据，然后根据获取到的数据状态更新任务列表 */
-async function getList() {
+async function getList(pageNum?: number) {
   // 等待获取最新数据
-  await getData();
+  if (pageNum) await getDataByPage(pageNum);
+  else await getData();
 
-  if (data.value.length === 0) {
-    tasks.value = [];
-    return;
+  const previousTasks = [...tasks.value];
+  const nextTasks = data.value.map(item => {
+    const previousTask = previousTasks.find(task => task.fileMd5 === item.fileMd5);
+
+    if (item.status === UploadStatus.Completed) {
+      return previousTask ? Object.assign(previousTask, item) : item;
+    }
+
+    item.status = UploadStatus.Break;
+    return previousTask ? Object.assign(previousTask, item) : item;
+  });
+
+  const serverFileMd5Set = new Set(nextTasks.map(item => item.fileMd5));
+  const localUploadTasks = previousTasks.filter(task => {
+    if (serverFileMd5Set.has(task.fileMd5)) return false;
+    if (task.status === UploadStatus.Completed || task.status === UploadStatus.Break) return false;
+    return matchesActiveFilters(task);
+  });
+
+  tasks.value = [...localUploadTasks, ...nextTasks];
+}
+
+async function handleFilterSearch() {
+  searchParams.filterOrgTags = orgTagFilter.value.length > 0 ? orgTagFilter.value.map(String).join(',') : null;
+  searchParams.isPublic = visibilityFilter.value === 'all' ? null : visibilityFilter.value === 'public';
+  await getList(1);
+}
+
+async function handleFilterReset() {
+  resetSearchParams();
+  orgTagFilter.value = [];
+  visibilityFilter.value = 'all';
+  selectedOrgTagNames.value = {};
+  await getList(1);
+}
+
+async function handleFilterTagClose(key: 'orgTag' | 'isPublic') {
+  if (key === 'orgTag') {
+    orgTagFilter.value = [];
+    selectedOrgTagNames.value = {};
+  } else {
+    visibilityFilter.value = 'all';
+  }
+  await handleFilterSearch();
+}
+
+async function handleSingleOrgTagClose(tagId: string | number) {
+  orgTagFilter.value = orgTagFilter.value.filter(item => item !== tagId);
+  const nextNames = { ...selectedOrgTagNames.value };
+  delete nextNames[String(tagId)];
+  selectedOrgTagNames.value = nextNames;
+  await handleFilterSearch();
+}
+
+async function handleOrgTagFilter(tagId: string | null, tagName?: string | null) {
+  if (!tagId) return;
+
+  orgTagFilter.value = [tagId];
+  selectedOrgTagNames.value = { [tagId]: tagName || tagId };
+  await handleFilterSearch();
+}
+
+async function handleVisibilityFilterUpdate(value: 'all' | 'public' | 'private') {
+  visibilityFilter.value = value;
+  await handleFilterSearch();
+}
+
+async function toggleOrgTagFilter(tag: Api.OrgTag.Item) {
+  const isSelected = orgTagFilter.value.map(String).includes(tag.tagId);
+
+  if (isSelected) {
+    orgTagFilter.value = orgTagFilter.value.filter(item => String(item) !== tag.tagId);
+    const nextNames = { ...selectedOrgTagNames.value };
+    delete nextNames[tag.tagId];
+    selectedOrgTagNames.value = nextNames;
+  } else {
+    orgTagFilter.value = [...orgTagFilter.value, tag.tagId];
+    selectedOrgTagNames.value = {
+      ...selectedOrgTagNames.value,
+      [tag.tagId]: tag.name
+    };
   }
 
-  // 遍历获取到的数据，以处理每个项目
-  data.value.forEach(item => {
-    // 检查项目状态是否为已完成
-    if (item.status === UploadStatus.Completed) {
-      // 查找任务列表中是否有匹配的文件MD5
-      const index = tasks.value.findIndex(task => task.fileMd5 === item.fileMd5);
-      // 如果找到匹配项，则更新其状态
-      if (index !== -1) {
-        Object.assign(tasks.value[index], item);
-      } else {
-        // 如果没有找到匹配项，则将该项目添加到任务列表中
-        tasks.value.push(item);
-      }
-    } else if (!tasks.value.some(task => task.fileMd5 === item.fileMd5)) {
-      // 如果项目状态不是已完成，并且任务列表中没有相同的文件MD5，则将该项目的状态设置为中断，并添加到任务列表中
-      item.status = UploadStatus.Break;
-      tasks.value.push(item);
-    }
-  });
+  await handleFilterSearch();
+}
+
+function isOrgTagSelected(tagId: string) {
+  return orgTagFilter.value.map(String).includes(tagId);
+}
+
+function matchesActiveFilters(task: Api.KnowledgeBase.UploadTask) {
+  const selectedOrgTags = orgTagFilter.value.map(String);
+  if (selectedOrgTags.length > 0 && (!task.orgTag || !selectedOrgTags.includes(task.orgTag))) return false;
+
+  if (visibilityFilter.value === 'all') return true;
+  const isPublic = task.public || task.isPublic;
+  return visibilityFilter.value === 'public' ? isPublic : !isPublic;
+}
+
+function renderOwnership(row: Api.KnowledgeBase.UploadTask) {
+  const tagName = row.orgTagName || '默认组织';
+  const isPublic = row.public || row.isPublic;
+
+  return (
+    <div class="leading-5">
+      <div class="text-14px text-#1f2937">{row.uploaderName || row.userId || '-'}</div>
+      <div class="mt-3px flex min-w-0 flex-wrap items-center gap-6px text-12px text-#8a8f99">
+        {row.orgTag ? (
+          <NTooltip>
+            {{
+              trigger: () => (
+                <span class="inline-flex cursor-pointer" onClick={() => handleOrgTagFilter(row.orgTag, row.orgTagName)}>
+                  <NTag size="small" type="info" bordered={false} class="max-w-126px">
+                    <NEllipsis tooltip={false}>{tagName}</NEllipsis>
+                  </NTag>
+                </span>
+              ),
+              default: () => `筛选：${tagName}`
+            }}
+          </NTooltip>
+        ) : (
+          <NTag size="small" bordered={false}>
+            {tagName}
+          </NTag>
+        )}
+        {isPublic ? <NTag size="small" type="success">公开</NTag> : <NTag size="small" type="warning">私有</NTag>}
+      </div>
+    </div>
+  );
 }
 
 async function handleDelete(fileMd5: string) {
@@ -644,7 +800,7 @@ async function onBeforeUpload(
 
 <template>
   <div class="min-h-500px flex-col-stretch gap-16px overflow-hidden lt-sm:overflow-auto">
-    <NCard title="文件列表" :bordered="false" size="small" class="sm:flex-1-hidden card-wrapper">
+    <NCard title="文件列表" :bordered="false" size="small" class="sm:flex-1-hidden card-wrapper knowledge-file-card">
       <template #header-extra>
         <TableHeaderOperation v-model:columns="columnChecks" :loading="loading" @add="handleUpload" @refresh="getList">
           <template #prefix>
@@ -657,6 +813,56 @@ async function onBeforeUpload(
           </template>
         </TableHeaderOperation>
       </template>
+      <div class="knowledge-file-filter mb-14px flex flex-col gap-10px">
+        <div class="filter-row">
+          <span class="filter-label">组织标签</span>
+          <div class="filter-options">
+            <NButton
+              v-for="tag in orgTagOptions"
+              :key="tag.tagId"
+              size="small"
+              :type="isOrgTagSelected(tag.tagId) ? 'primary' : 'default'"
+              :ghost="!isOrgTagSelected(tag.tagId)"
+              @click="toggleOrgTagFilter(tag)"
+            >
+              {{ tag.name }}
+            </NButton>
+          </div>
+        </div>
+        <div class="filter-row">
+          <span class="filter-label">可见范围</span>
+          <div class="filter-options">
+            <NButton
+              v-for="option in visibilityOptions"
+              :key="option.value"
+              size="small"
+              :type="visibilityFilter === option.value ? 'primary' : 'default'"
+              :ghost="visibilityFilter !== option.value"
+              @click="handleVisibilityFilterUpdate(option.value as 'all' | 'public' | 'private')"
+            >
+              {{ option.label }}
+            </NButton>
+          </div>
+          <NButton v-if="activeFilterCount > 0" size="small" quaternary @click="handleFilterReset">
+            重置
+          </NButton>
+        </div>
+        <div v-if="activeFilterCount > 0" class="knowledge-active-filters flex min-w-0 items-center gap-8px text-12px text-#8a8f99">
+          <span>已筛选</span>
+          <NTag
+            v-for="tagId in orgTagFilter"
+            :key="tagId"
+            size="small"
+            closable
+            @close="handleSingleOrgTagClose(tagId)"
+          >
+            {{ selectedOrgTagNames[String(tagId)] || tagId }}
+          </NTag>
+          <NTag v-if="visibilityFilter !== 'all'" size="small" closable @close="handleFilterTagClose('isPublic')">
+            {{ visibilityFilter === 'public' ? '公开' : '私有' }}
+          </NTag>
+        </div>
+      </div>
       <NDataTable
         striped
         :columns="columns"
@@ -669,7 +875,7 @@ async function onBeforeUpload(
         :row-key="row => row.id"
         :pagination="false"
         @update:sorter="handleSorterUpdate"
-        class="sm:h-full"
+        class="knowledge-file-table sm:h-full"
       />
     </NCard>
     <UploadDialog v-model:visible="uploadVisible" />
@@ -707,6 +913,55 @@ async function onBeforeUpload(
   .n-progress-icon.n-progress-icon--as-text {
     white-space: nowrap;
   }
+}
+
+:deep(.knowledge-file-card > .n-card__content) {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  padding-bottom: 16px;
+}
+
+.knowledge-file-filter {
+  flex-shrink: 0;
+}
+
+.filter-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.filter-label {
+  flex-shrink: 0;
+  width: 64px;
+  padding-top: 5px;
+  color: #5f6673;
+  font-size: 13px;
+  line-height: 22px;
+}
+
+.filter-options {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.knowledge-active-filters {
+  max-width: min(680px, 100%);
+  overflow-x: auto;
+  white-space: nowrap;
+}
+
+.knowledge-active-filters :deep(.n-tag) {
+  flex-shrink: 0;
+}
+
+.knowledge-file-table {
+  min-height: 0;
+  flex: 1;
 }
 
 :global(.file-preview-modal) {
