@@ -118,9 +118,11 @@ const columns: DataTableColumns<Api.ModelConfig.Item> = [
     fixed: 'right',
     render: row => (
       <NSpace size={8}>
-        <NButton size="small" type="primary" ghost onClick={() => openEdit(row)}>
-          编辑
-        </NButton>
+        {canManage(row) ? (
+          <NButton size="small" type="primary" ghost onClick={() => openEdit(row)}>
+            编辑
+          </NButton>
+        ) : null}
         {canDelete(row) ? (
           <NPopconfirm onPositiveClick={() => handleDelete(row)}>
             {{
@@ -146,8 +148,12 @@ function ownerLabel(item: Api.ModelConfig.Item) {
   return item.ownerType === 'SYSTEM' ? '系统' : '我的';
 }
 
-function canDelete(item: Api.ModelConfig.Item) {
+function canManage(item: Api.ModelConfig.Item) {
   return item.ownerType === 'USER' || isAdmin.value;
+}
+
+function canDelete(item: Api.ModelConfig.Item) {
+  return canManage(item);
 }
 
 async function loadData() {
@@ -193,6 +199,10 @@ function openCreate(modelType: Api.ModelConfig.ModelType) {
 }
 
 function openEdit(row: Api.ModelConfig.Item) {
+  if (!canManage(row)) {
+    window.$message?.warning('系统模型只能由管理员维护');
+    return;
+  }
   editingId.value = row.id;
   formModel.value = {
     ownerType: row.ownerType,

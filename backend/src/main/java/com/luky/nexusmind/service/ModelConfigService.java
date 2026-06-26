@@ -87,8 +87,8 @@ public class ModelConfigService {
         UserModelPreference preference = preferenceRepository.findByUserId(user.getId()).orElse(null);
         return new ModelConfigOverview(
                 configs.stream().map(this::toResponse).toList(),
-                preference != null ? preference.getLlmConfigId() : null,
-                preference != null ? preference.getEmbeddingConfigId() : null,
+                effectiveSelectedConfigId(user, preference, AiModelType.LLM),
+                effectiveSelectedConfigId(user, preference, AiModelType.EMBEDDING),
                 user.getRole() == User.Role.ADMIN);
     }
 
@@ -177,6 +177,25 @@ public class ModelConfigService {
             }
         }
         return resolveSystemDefault(modelType);
+    }
+
+    private Long effectiveSelectedConfigId(User user, UserModelPreference preference, AiModelType modelType) {
+        Long preferredId = null;
+        if (preference != null) {
+            preferredId = modelType == AiModelType.LLM ? preference.getLlmConfigId() : preference.getEmbeddingConfigId();
+        }
+        if (preferredId != null) {
+            Optional<AiModelConfig> preferred = configRepository.findById(preferredId)
+                    .filter(config -> config.getModelType() == modelType)
+                    .filter(AiModelConfig::isEnabled)
+                    .filter(config -> canView(user, config));
+            if (preferred.isPresent()) {
+                return preferredId;
+            }
+        }
+        return resolveSystemDefault(modelType)
+                .map(ResolvedModelConfig::id)
+                .orElse(null);
     }
 
     private Optional<ResolvedModelConfig> resolveSystemDefault(AiModelType modelType) {
