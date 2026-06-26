@@ -166,6 +166,7 @@ const local: App.I18n.Schema = {
     'chat-history': '聊天审计',
     'knowledge-base': '知识库',
     'org-tag': '组织标签',
+    'model-config': '模型配置',
     observability: '观测数据',
     user: '用户管理',
     'personal-center': '个人中心'

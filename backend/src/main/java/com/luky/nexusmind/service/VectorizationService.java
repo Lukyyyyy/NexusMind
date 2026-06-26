@@ -36,6 +36,9 @@ public class VectorizationService {
     @Autowired
     private FileProcessingStatusService processingStatusService;
 
+    @Autowired
+    private ModelConfigService modelConfigService;
+
     /**
      * 执行向量化操作
      * @param fileMd5 文件指纹
@@ -79,7 +82,9 @@ public class VectorizationService {
 
             // 调用外部模型生成向量
             List<float[]> vectors = embeddingClient.embed(texts, userId, fileMd5);
+            ModelConfigService.ResolvedModelConfig embeddingConfig = modelConfigService.resolveEmbeddingConfig(userId);
             span.attribute("nexusmind.vectorize.embedding.count", vectors.size());
+            span.attribute("nexusmind.model.config.id", embeddingConfig.id() != null ? embeddingConfig.id() : -1);
 
             // 构建 Elasticsearch 文档并存储
             List<EsDocument> esDocuments;
@@ -92,7 +97,7 @@ public class VectorizationService {
                                 chunks.get(i).getChunkId(),
                                 chunks.get(i).getContent(),
                                 vectors.get(i),
-                                "deepseek-embed", // 更新为 DeepSeek 的模型版本
+                                embeddingConfig.modelName(),
                                 userId,
                                 orgTag,
                                 isPublic

@@ -73,7 +73,7 @@ public class HybridSearchService {
             logger.debug("用户 {} 的数据库ID: {}", userId, userDbId);
 
             // 生成查询向量
-            final List<Float> queryVector = embedToVectorList(query);
+            final List<Float> queryVector = embedToVectorList(query, userId);
 
             // 如果向量生成失败，仅使用文本匹配
             if (queryVector == null) {
@@ -259,7 +259,7 @@ public class HybridSearchService {
             logger.warn("使用了没有权限过滤的搜索方法，建议使用 searchWithPermission 方法");
 
             // 生成查询向量
-            final List<Float> queryVector = embedToVectorList(query);
+            final List<Float> queryVector = embedToVectorList(query, null);
 
             // 如果向量生成失败，仅使用文本匹配
             if (queryVector == null) {
@@ -344,9 +344,9 @@ public class HybridSearchService {
     /**
      * 生成查询向量，返回 List<Float>，失败时返回 null
      */
-    private List<Float> embedToVectorList(String text) {
+    private List<Float> embedToVectorList(String text, String userId) {
         try {
-            List<float[]> vecs = embeddingClient.embed(List.of(text));
+            List<float[]> vecs = embeddingClient.embed(List.of(text), userId, null);
             if (vecs == null || vecs.isEmpty()) {
                 logger.warn("生成的向量为空");
                 return null;

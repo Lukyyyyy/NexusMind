@@ -97,6 +97,17 @@ export const generatedRoutes: GeneratedRoute[] = [
     }
   },
   {
+    name: 'model-config',
+    path: '/model-config',
+    component: 'layout.base$view.model-config',
+    meta: {
+      title: 'model-config',
+      i18nKey: 'route.model-config',
+      icon: 'solar:settings-minimalistic-line-duotone',
+      order: 6
+    }
+  },
+  {
     name: 'observability',
     path: '/observability',
     component: 'layout.base$view.observability',
@@ -104,7 +115,7 @@ export const generatedRoutes: GeneratedRoute[] = [
       title: 'observability',
       i18nKey: 'route.observability',
       icon: 'solar:chart-2-line-duotone',
-      order: 6
+      order: 7
     }
   },
   {
@@ -127,7 +138,7 @@ export const generatedRoutes: GeneratedRoute[] = [
       title: 'personal-center',
       i18nKey: 'route.personal-center',
       icon: 'solar:people-nearby-line-duotone',
-      order: 7
+      order: 8
     }
   },
   {

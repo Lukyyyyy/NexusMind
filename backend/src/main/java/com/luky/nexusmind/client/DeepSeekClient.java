@@ -3,7 +3,6 @@ package com.luky.nexusmind.client;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.web.reactive.function.client.WebClient;
 import java.util.List;
 import java.util.Map;
@@ -17,39 +16,28 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import com.luky.nexusmind.config.AiProperties;
 import com.luky.nexusmind.service.AiTraceService;
+import com.luky.nexusmind.service.ModelConfigService;
 
 @Service
 public class DeepSeekClient {
 
-    private final WebClient webClient;
-    private final String apiKey;
-    private final String model;
     private final AiProperties aiProperties;
     private final AiTraceService aiTraceService;
+    private final ModelConfigService modelConfigService;
     private static final Logger logger = LoggerFactory.getLogger(DeepSeekClient.class);
 
-    public DeepSeekClient(@Value("${deepseek.api.url}") String apiUrl,
-            @Value("${deepseek.api.key}") String apiKey,
-            @Value("${deepseek.api.model}") String model,
-            AiProperties aiProperties,
-            AiTraceService aiTraceService) {
-        WebClient.Builder builder = WebClient.builder().baseUrl(apiUrl);
-
-        // 只有当 API key 不为空时才添加 Authorization header
-        if (apiKey != null && !apiKey.trim().isEmpty()) {
-            builder.defaultHeader(HttpHeaders.AUTHORIZATION, "Bearer " + apiKey);
-        }
-
-        this.webClient = builder.build();
-        this.apiKey = apiKey;
-        this.model = model;
+    public DeepSeekClient(AiProperties aiProperties,
+            AiTraceService aiTraceService,
+            ModelConfigService modelConfigService) {
         this.aiProperties = aiProperties;
         this.aiTraceService = aiTraceService;
+        this.modelConfigService = modelConfigService;
     }
 
     public void streamResponse(String userMessage,
             String context,
             List<Map<String, String>> history,
+            String configUsername,
             String userId,
             String sessionId,
             String conversationId,
@@ -57,14 +45,17 @@ public class DeepSeekClient {
             Consumer<Throwable> onError,
             Runnable onComplete) {
 
-        Map<String, Object> request = buildRequest(userMessage, context, history);
+        ModelConfigService.ResolvedModelConfig modelConfig = modelConfigService.resolveLlmConfig(configUsername);
+        WebClient webClient = buildWebClient(modelConfig);
+        Map<String, Object> request = buildRequest(userMessage, context, history, modelConfig);
         AiTraceService.TraceSpan span = aiTraceService.startSpan(
                 "llm.deepseek.stream", userId, sessionId, conversationId)
                 .attribute("langfuse.observation.type", "generation")
-                .attribute("langfuse.observation.model.name", model)
-                .attribute("gen_ai.system", "deepseek")
-                .attribute("gen_ai.request.model", model)
+                .attribute("langfuse.observation.model.name", modelConfig.modelName())
+                .attribute("gen_ai.system", "openai-compatible")
+                .attribute("gen_ai.request.model", modelConfig.modelName())
                 .attribute("gen_ai.operation.name", "chat")
+                .attribute("nexusmind.model.config.id", modelConfig.id() != null ? modelConfig.id() : -1)
                 .attribute("nexusmind.context.length", context != null ? context.length() : 0)
                 .attribute("nexusmind.history.count", history != null ? history.size() : 0);
 
@@ -121,7 +112,9 @@ public class DeepSeekClient {
         }
     }
 
-    public String generateTitle(String userMessage, String assistantResponse) {
+    public String generateTitle(String configUsername, String userMessage, String assistantResponse) {
+        ModelConfigService.ResolvedModelConfig modelConfig = modelConfigService.resolveLlmConfig(configUsername);
+        WebClient webClient = buildWebClient(modelConfig);
         String prompt = """
                 请为下面这轮知识库问答生成一个 8 到 16 个汉字的会话标题。
                 只输出标题，不要输出标点、解释或引号。
@@ -133,7 +126,7 @@ public class DeepSeekClient {
                 %s
                 """.formatted(abbreviate(userMessage, 800), abbreviate(assistantResponse, 800));
         Map<String, Object> request = new java.util.HashMap<>();
-        request.put("model", model);
+        request.put("model", modelConfig.modelName());
         request.put("stream", false);
         request.put("temperature", 0.2);
         request.put("max_tokens", 32);
@@ -167,29 +160,46 @@ public class DeepSeekClient {
 
     private Map<String, Object> buildRequest(String userMessage,
             String context,
-            List<Map<String, String>> history) {
+            List<Map<String, String>> history,
+            ModelConfigService.ResolvedModelConfig modelConfig) {
         logger.info("构建请求，用户消息：{}，上下文长度：{}，历史消息数：{}",
                 userMessage,
                 context != null ? context.length() : 0,
                 history != null ? history.size() : 0);
 
         Map<String, Object> request = new java.util.HashMap<>();
-        request.put("model", model);
+        request.put("model", modelConfig.modelName());
         request.put("messages", buildMessages(userMessage, context, history));
         request.put("stream", true);
         request.put("stream_options", Map.of("include_usage", true));
         // 生成参数
-        AiProperties.Generation gen = aiProperties.getGeneration();
-        if (gen.getTemperature() != null) {
-            request.put("temperature", gen.getTemperature());
+        Double temperature = modelConfig.temperature() != null
+                ? modelConfig.temperature()
+                : aiProperties.getGeneration().getTemperature();
+        Double topP = modelConfig.topP() != null
+                ? modelConfig.topP()
+                : aiProperties.getGeneration().getTopP();
+        Integer maxTokens = modelConfig.maxTokens() != null
+                ? modelConfig.maxTokens()
+                : aiProperties.getGeneration().getMaxTokens();
+        if (temperature != null) {
+            request.put("temperature", temperature);
         }
-        if (gen.getTopP() != null) {
-            request.put("top_p", gen.getTopP());
+        if (topP != null) {
+            request.put("top_p", topP);
         }
-        if (gen.getMaxTokens() != null) {
-            request.put("max_tokens", gen.getMaxTokens());
+        if (maxTokens != null) {
+            request.put("max_tokens", maxTokens);
         }
         return request;
+    }
+
+    private WebClient buildWebClient(ModelConfigService.ResolvedModelConfig modelConfig) {
+        WebClient.Builder builder = WebClient.builder().baseUrl(modelConfig.baseUrl());
+        if (modelConfig.apiKey() != null && !modelConfig.apiKey().trim().isEmpty()) {
+            builder.defaultHeader(HttpHeaders.AUTHORIZATION, "Bearer " + modelConfig.apiKey());
+        }
+        return builder.build();
     }
 
     private List<Map<String, String>> buildMessages(String userMessage,

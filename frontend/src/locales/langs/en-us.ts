@@ -166,6 +166,7 @@ const local: App.I18n.Schema = {
     'chat-history': 'Chat Audit',
     'knowledge-base': 'Knowledge Base',
     'org-tag': 'Organization Tag',
+    'model-config': 'Model Config',
     observability: 'Observability',
     user: 'User Management',
     'personal-center': 'Personal Center'

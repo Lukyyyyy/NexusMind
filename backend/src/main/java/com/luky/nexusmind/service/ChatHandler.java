@@ -130,6 +130,7 @@ public class ChatHandler {
             // 5. 调用 DeepSeek API 并处理流式响应
             logger.info("调用DeepSeek API生成回复");
             deepSeekClient.streamResponse(userMessage, context, history, 
+                userId,
                 effectiveTraceUserId,
                 session.getId(),
                 conversationId,
@@ -211,7 +212,7 @@ public class ChatHandler {
             return;
         }
         new Thread(() -> {
-            String title = deepSeekClient.generateTitle(userMessage, completeResponse);
+            String title = deepSeekClient.generateTitle(userId, userMessage, completeResponse);
             if (chatSessionService.updateGeneratedTitle(userId, chatSessionId, title)) {
                 sendTitleUpdateNotification(session, chatSessionId, title);
             }

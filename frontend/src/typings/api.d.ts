@@ -106,6 +106,66 @@ declare namespace Api {
     type List = Common.PaginatingQueryRecord<Item>;
   }
 
+  namespace ModelConfig {
+    type OwnerType = 'SYSTEM' | 'USER';
+    type ModelType = 'LLM' | 'EMBEDDING';
+
+    interface Item {
+      id: number;
+      ownerType: OwnerType;
+      ownerUserId: number | null;
+      modelType: ModelType;
+      name: string;
+      provider: string | null;
+      baseUrl: string;
+      apiKey: string;
+      modelName: string;
+      enabled: boolean;
+      defaultModel: boolean;
+      temperature: number | null;
+      topP: number | null;
+      maxTokens: number | null;
+      dimension: number | null;
+      batchSize: number | null;
+      maxConcurrency: number | null;
+    }
+
+    interface Overview {
+      configs: Item[];
+      selectedLlmConfigId: number | null;
+      selectedEmbeddingConfigId: number | null;
+      admin: boolean;
+    }
+
+    interface Request {
+      ownerType: OwnerType;
+      modelType: ModelType;
+      name: string;
+      provider: string | null;
+      baseUrl: string;
+      apiKey: string;
+      modelName: string;
+      enabled: boolean;
+      defaultModel: boolean;
+      temperature: number | null;
+      topP: number | null;
+      maxTokens: number | null;
+      dimension: number | null;
+      batchSize: number | null;
+      maxConcurrency: number | null;
+    }
+
+    interface PreferenceRequest {
+      llmConfigId: number | null;
+      embeddingConfigId: number | null;
+    }
+
+    interface Preference {
+      llmConfigId: number | null;
+      embeddingConfigId: number | null;
+    }
+  }
+
   namespace Observability {
     interface TimeRangeParams {
       from: string;

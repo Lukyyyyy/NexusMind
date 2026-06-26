@@ -3,6 +3,9 @@ package com.luky.nexusmind.client;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.luky.nexusmind.service.AiTraceService;
+import com.luky.nexusmind.service.ModelConfigService;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -24,9 +27,6 @@ import java.util.concurrent.Executors;
 @Component
 public class EmbeddingClient {
 
-    @Value("${embedding.api.model}")
-    private String modelId;
-    
     @Value("${embedding.api.batch-size:100}")
     private int batchSize;
 
@@ -40,14 +40,16 @@ public class EmbeddingClient {
     private int dimension;
     
     private static final Logger logger = LoggerFactory.getLogger(EmbeddingClient.class);
-    private final WebClient webClient;
     private final ObjectMapper objectMapper;
     private final AiTraceService aiTraceService;
+    private final ModelConfigService modelConfigService;
 
-    public EmbeddingClient(WebClient embeddingWebClient, ObjectMapper objectMapper, AiTraceService aiTraceService) {
-        this.webClient = embeddingWebClient;
+    public EmbeddingClient(ObjectMapper objectMapper,
+                           AiTraceService aiTraceService,
+                           ModelConfigService modelConfigService) {
         this.objectMapper = objectMapper;
         this.aiTraceService = aiTraceService;
+        this.modelConfigService = modelConfigService;
     }
 
     /**
@@ -60,27 +62,32 @@ public class EmbeddingClient {
     }
 
     public List<float[]> embed(List<String> texts, String userId, String fileMd5) {
+        ModelConfigService.ResolvedModelConfig modelConfig = modelConfigService.resolveEmbeddingConfig(userId);
+        int effectiveBatchSize = modelConfig.batchSize() != null ? modelConfig.batchSize() : batchSize;
+        int effectiveMaxConcurrency = modelConfig.maxConcurrency() != null ? modelConfig.maxConcurrency() : maxConcurrency;
+        int effectiveDimension = modelConfig.dimension() != null ? modelConfig.dimension() : dimension;
         AiTraceService.TraceSpan span = fileMd5 != null
                 ? aiTraceService.startFileSpan("embedding.batch", userId, fileMd5, null)
                 : aiTraceService.startSpan("embedding.batch", null, null, null);
         span
                 .attribute("gen_ai.operation.name", "embeddings")
-                .attribute("gen_ai.request.model", modelId)
+                .attribute("gen_ai.request.model", modelConfig.modelName())
                 .attribute("nexusmind.embedding.input.count", texts != null ? texts.size() : 0)
-                .attribute("nexusmind.embedding.batch_size", batchSize)
+                .attribute("nexusmind.model.config.id", modelConfig.id() != null ? modelConfig.id() : -1)
+                .attribute("nexusmind.embedding.batch_size", effectiveBatchSize)
                 .attribute("nexusmind.embedding.concurrent_enabled", concurrentEnabled)
-                .attribute("nexusmind.embedding.max_concurrency", maxConcurrency)
-                .attribute("nexusmind.embedding.dimension", dimension);
+                .attribute("nexusmind.embedding.max_concurrency", effectiveMaxConcurrency)
+                .attribute("nexusmind.embedding.dimension", effectiveDimension);
         try {
             logger.info("开始生成向量，文本数量: {}", texts.size());
 
-            List<List<String>> batches = splitIntoBatches(texts);
+            List<List<String>> batches = splitIntoBatches(texts, effectiveBatchSize);
             span.attribute("nexusmind.embedding.batch.count", batches.size());
             List<float[]> all;
-            if (concurrentEnabled && maxConcurrency > 1 && batches.size() > 1) {
-                all = embedConcurrently(batches, texts.size());
+            if (concurrentEnabled && effectiveMaxConcurrency > 1 && batches.size() > 1) {
+                all = embedConcurrently(batches, texts.size(), effectiveMaxConcurrency, modelConfig, effectiveDimension);
             } else {
-                all = embedSerially(batches, texts.size());
+                all = embedSerially(batches, texts.size(), modelConfig, effectiveDimension);
             }
 
             logger.info("成功生成向量，总数量: {}", all.size());
@@ -97,16 +104,20 @@ public class EmbeddingClient {
         }
     }
 
-    private List<float[]> embedConcurrently(List<List<String>> batches, int expectedSize) throws Exception {
+    private List<float[]> embedConcurrently(List<List<String>> batches,
+                                            int expectedSize,
+                                            int maxConcurrency,
+                                            ModelConfigService.ResolvedModelConfig modelConfig,
+                                            int dimension) throws Exception {
         int concurrency = Math.min(maxConcurrency, batches.size());
         ExecutorService executor = Executors.newFixedThreadPool(concurrency);
         try {
-            logger.info("启用并发向量化，批次数: {}, 并发数: {}, batchSize: {}", batches.size(), concurrency, batchSize);
+            logger.info("启用并发向量化，批次数: {}, 并发数: {}", batches.size(), concurrency);
             List<CompletableFuture<List<float[]>>> futures = new ArrayList<>(batches.size());
             for (int i = 0; i < batches.size(); i++) {
                 final int batchIndex = i;
                 final List<String> batch = batches.get(i);
-                futures.add(CompletableFuture.supplyAsync(() -> callAndParseBatch(batchIndex, batch), executor));
+                futures.add(CompletableFuture.supplyAsync(() -> callAndParseBatch(batchIndex, batch, modelConfig, dimension), executor));
             }
 
             List<float[]> all = new ArrayList<>(expectedSize);
@@ -116,25 +127,31 @@ public class EmbeddingClient {
             return all;
         } catch (Exception e) {
             logger.warn("并发向量化失败，自动回退为串行请求: {}", e.getMessage());
-            return embedSerially(batches, expectedSize);
+            return embedSerially(batches, expectedSize, modelConfig, dimension);
         } finally {
             executor.shutdown();
         }
     }
 
-    private List<float[]> embedSerially(List<List<String>> batches, int expectedSize) throws Exception {
-        logger.info("使用串行向量化，批次数: {}, batchSize: {}", batches.size(), batchSize);
+    private List<float[]> embedSerially(List<List<String>> batches,
+                                        int expectedSize,
+                                        ModelConfigService.ResolvedModelConfig modelConfig,
+                                        int dimension) throws Exception {
+        logger.info("使用串行向量化，批次数: {}", batches.size());
         List<float[]> all = new ArrayList<>(expectedSize);
         for (int i = 0; i < batches.size(); i++) {
-            all.addAll(callAndParseBatch(i, batches.get(i)));
+            all.addAll(callAndParseBatch(i, batches.get(i), modelConfig, dimension));
         }
         return all;
     }
 
-    private List<float[]> callAndParseBatch(int batchIndex, List<String> batch) {
+    private List<float[]> callAndParseBatch(int batchIndex,
+                                            List<String> batch,
+                                            ModelConfigService.ResolvedModelConfig modelConfig,
+                                            int dimension) {
         try {
             logger.debug("调用向量 API, 批次: {} (size={})", batchIndex, batch.size());
-            String response = callApiOnce(batch);
+            String response = callApiOnce(batch, modelConfig, dimension);
             return parseVectors(response);
         } catch (WebClientResponseException e) {
             logger.error("向量化批次失败: batchIndex={}, status={}, responseBody={}",
@@ -145,7 +162,7 @@ public class EmbeddingClient {
         }
     }
 
-    private List<List<String>> splitIntoBatches(List<String> texts) {
+    private List<List<String>> splitIntoBatches(List<String> texts, int batchSize) {
         List<List<String>> batches = new ArrayList<>((texts.size() + batchSize - 1) / batchSize);
         for (int start = 0; start < texts.size(); start += batchSize) {
             int end = Math.min(start + batchSize, texts.size());
@@ -154,14 +171,14 @@ public class EmbeddingClient {
         return batches;
     }
 
-    private String callApiOnce(List<String> batch) {
+    private String callApiOnce(List<String> batch, ModelConfigService.ResolvedModelConfig modelConfig, int dimension) {
         Map<String, Object> requestBody = new HashMap<>();
-        requestBody.put("model", modelId);
+        requestBody.put("model", modelConfig.modelName());
         requestBody.put("input", batch);
         requestBody.put("dimensions", dimension);
         requestBody.put("encoding_format", "float");  // 添加编码格式
 
-        return webClient.post()
+        return buildWebClient(modelConfig).post()
                 .uri("/embeddings")
                 .bodyValue(requestBody)
                 .retrieve()
@@ -170,6 +187,16 @@ public class EmbeddingClient {
                         .filter(e -> e instanceof WebClientResponseException responseException
                                 && responseException.getStatusCode().is5xxServerError()))
                 .block(Duration.ofSeconds(30));
+    }
+
+    private WebClient buildWebClient(ModelConfigService.ResolvedModelConfig modelConfig) {
+        WebClient.Builder builder = WebClient.builder()
+                .baseUrl(modelConfig.baseUrl())
+                .defaultHeader(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE);
+        if (modelConfig.apiKey() != null && !modelConfig.apiKey().trim().isEmpty()) {
+            builder.defaultHeader(HttpHeaders.AUTHORIZATION, "Bearer " + modelConfig.apiKey());
+        }
+        return builder.build();
     }
 
     private List<float[]> parseVectors(String response) throws Exception {
