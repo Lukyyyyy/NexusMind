@@ -2,7 +2,6 @@
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 import { nextTick } from 'vue';
 import { VueMarkdownIt } from 'vue-markdown-shiki';
-import { formatDate } from '@/utils/common';
 defineOptions({ name: 'ChatMessage' });
 
 const props = defineProps<{ msg: Api.Chat.Message }>();
@@ -112,38 +111,30 @@ async function handleSourceFileClick(fileName: string) {
 </script>
 
 <template>
-  <div class="mb-8 flex" :class="msg.role === 'user' ? 'justify-end' : 'justify-start'">
-    <div class="max-w-[78%] flex-col gap-2" :class="msg.role === 'user' ? 'items-end' : 'items-start'">
-      <div v-if="msg.role === 'user'" class="flex flex-row-reverse items-center gap-4">
-        <NAvatar class="bg-success">
-          <SvgIcon icon="ph:user-circle" class="text-icon-large color-white" />
-        </NAvatar>
-        <div class="flex-col items-end gap-1 text-right">
-          <NText class="text-4 font-bold">{{ authStore.userInfo.username }}</NText>
-          <NText class="text-3 color-gray-500">{{ formatDate(msg.timestamp) }}</NText>
+  <div class="chat-message mb-8" :class="msg.role === 'user' ? 'chat-message--user' : 'chat-message--assistant'">
+    <div class="chat-message__inner">
+      <template v-if="msg.role === 'user'">
+        <div class="chat-message__user-row">
+          <div class="chat-message__user-bubble">
+            <NText tag="div" class="chat-message__text whitespace-pre-wrap text-4">{{ content }}</NText>
+          </div>
         </div>
-      </div>
-      <div v-else class="flex items-center gap-4">
-        <NAvatar class="bg-primary">
-          <SystemLogo class="text-6 text-white" />
-        </NAvatar>
-        <div class="flex-col gap-1">
-          <NText class="text-4 font-bold">知枢</NText>
-          <NText class="text-3 color-gray-500">{{ formatDate(msg.timestamp) }}</NText>
+      </template>
+
+      <template v-else>
+        <div class="chat-message__assistant-content">
+          <NText v-if="msg.status === 'pending'">
+            <icon-eos-icons:three-dots-loading class="text-8" />
+          </NText>
+          <NText v-else-if="msg.status === 'error'" class="italic">服务器繁忙，请稍后再试</NText>
+          <NText v-else tag="div" class="chat-message__markdown text-4" @click="handleContentClick">
+            <VueMarkdownIt :content="content" />
+          </NText>
         </div>
-      </div>
-      <div class="max-w-full rounded-6px px-4 py-3" :class="msg.role === 'user' ? 'bg-primary/10' : 'bg-white dark:bg-#1f1f24'">
-        <NText v-if="msg.status === 'pending'">
-          <icon-eos-icons:three-dots-loading class="text-8" />
-        </NText>
-        <NText v-else-if="msg.status === 'error'" class="italic">服务器繁忙，请稍后再试</NText>
-        <div v-else-if="msg.role === 'assistant'" @click="handleContentClick">
-          <VueMarkdownIt :content="content" />
-        </div>
-        <NText v-else class="whitespace-pre-wrap text-4">{{ content }}</NText>
-      </div>
-      <div class="flex gap-4" :class="msg.role === 'user' ? 'justify-end' : 'justify-start'">
-        <NButton quaternary @click="handleCopy(msg.content)">
+      </template>
+
+      <div class="chat-message__actions" :class="msg.role === 'user' ? 'justify-end' : 'justify-start'">
+        <NButton quaternary size="small" @click="handleCopy(msg.content)">
           <template #icon>
             <icon-mynaui:copy />
           </template>
@@ -167,6 +158,106 @@ async function handleSourceFileClick(fileName: string) {
 
   &:active {
     color: #096dd9;
+  }
+}
+
+.chat-message__inner {
+  max-width: 760px;
+  margin: 0 auto;
+}
+
+.chat-message__user-row {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.chat-message__user-bubble {
+  max-width: min(70%, 620px);
+  border-radius: 20px;
+  background: #f3f4f6;
+  padding: 10px 16px;
+  line-height: 1.5;
+}
+
+:global(.dark) .chat-message__user-bubble {
+  background: #26262b;
+}
+
+.chat-message__assistant-content {
+  max-width: 760px;
+  color: #1f2937;
+}
+
+:global(.dark) .chat-message__assistant-content {
+  color: #f1f5f9;
+}
+
+.chat-message__actions {
+  display: flex;
+  margin-top: 6px;
+}
+
+.chat-message__text,
+.chat-message__markdown {
+  color: inherit;
+  line-height: 1.5;
+}
+
+.chat-message__markdown {
+  :deep(.vp-doc) {
+    width: auto;
+    min-width: 0;
+    color: inherit;
+    font-size: inherit;
+    line-height: 1.75;
+  }
+
+  :deep(.vp-doc > :first-child) {
+    margin-top: 0;
+  }
+
+  :deep(.vp-doc > :last-child) {
+    margin-bottom: 0;
+  }
+
+  :deep(.vp-doc p) {
+    margin: 0 0 1em;
+    font-size: inherit;
+    line-height: 1.75;
+  }
+
+  :deep(.vp-doc ul),
+  :deep(.vp-doc ol) {
+    margin: 0.75em 0 1em;
+    padding-left: 1.5em;
+  }
+
+  :deep(.vp-doc li) {
+    margin: 0.35em 0;
+    line-height: 1.75;
+  }
+
+  :deep(.vp-doc h1),
+  :deep(.vp-doc h2),
+  :deep(.vp-doc h3),
+  :deep(.vp-doc h4),
+  :deep(.vp-doc h5),
+  :deep(.vp-doc h6) {
+    margin: 0.8em 0 0.4em;
+    border: 0;
+    padding: 0;
+    font-size: 1em;
+    line-height: 1.5;
+  }
+
+  :deep(.vp-doc a) {
+    color: #1677ff;
+    font-weight: inherit;
+    text-underline-offset: 3px;
+  }
+
+  :deep(.vp-doc strong) {
+    font-weight: 600;
   }
 }
 </style>
