@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Ensure newly uploaded documents are always private from the UI, and documents in `PRIVATE_` spaces are visible only to their owner and administrators.
+**Goal:** Ensure documents uploaded to `PRIVATE_` spaces are always private and visible only to their owner and administrators, while other organizations retain configurable visibility.
 
 **Architecture:** Add a small, dependency-free permission policy as the single definition of private-space behavior. Apply it at upload persistence, document listing, Elasticsearch query construction, and servlet resource authorization; keep existing non-private organization behavior unchanged.
 
@@ -20,7 +20,7 @@
 - Modify `backend/src/main/java/com/luky/nexusmind/service/HybridSearchService.java`: make Elasticsearch filters private-space aware and allow administrator access.
 - Modify `backend/src/main/java/com/luky/nexusmind/config/OrgTagAuthorizationFilter.java`: make private-space checks take precedence over stale public flags.
 - Modify related backend tests to cover owner, administrator, and unrelated-user cases.
-- Modify `frontend/src/views/knowledge-base/modules/upload-dialog.vue`: remove public/private controls while retaining a fixed false payload.
+- Modify `frontend/src/views/knowledge-base/modules/upload-dialog.vue`: force private visibility for private spaces while retaining public/private controls for other organizations.
 
 ### Task 1: Centralize private-space policy
 
@@ -247,14 +247,14 @@ Run: `cd backend && mvn -Dtest=OrgTagAuthorizationFilterTest test`
 
 Expected: stale public flags cannot bypass private-space authorization.
 
-### Task 6: Remove public selection from uploads
+### Task 6: Restrict public selection for private-space uploads
 
 **Files:**
 - Modify: `frontend/src/views/knowledge-base/modules/upload-dialog.vue`
 
-- [ ] **Step 1: Remove the visibility form control and validation rule**
+- [ ] **Step 1: Make the visibility form conditional**
 
-Keep `isPublic: false` in `createDefaultModel()` so the API payload stays compatible. Remove `isPublic: defaultRequiredRule` and remove the entire `NFormItem` labeled `是否公开`.
+Keep `isPublic: false` as the default. When the selected tag starts with `PRIVATE_`, force the value back to false and show a fixed-private notice; otherwise show the public/private radio controls.
 
 - [ ] **Step 2: Run frontend static verification**
 

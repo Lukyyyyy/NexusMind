@@ -143,6 +143,7 @@ public class DocumentController {
     public ResponseEntity<?> getAccessibleFiles(
             @RequestAttribute("userId") String userId,
             @RequestAttribute("orgTags") String orgTags,
+            @RequestAttribute("role") String role,
             @RequestParam(required = false) String orgTag,
             @RequestParam(required = false) List<String> filterOrgTags,
             @RequestParam(required = false) Boolean isPublic) {
@@ -158,7 +159,7 @@ public class DocumentController {
                     isPublic
             );
             
-            List<FileUpload> files = documentService.getAccessibleFiles(userId, orgTags);
+            List<FileUpload> files = documentService.getAccessibleFiles(userId, orgTags, role);
             files = filterAccessibleFiles(files, orgTag, filterOrgTags, isPublic);
             List<Map<String, Object>> fileData = toFileDtos(files, userId);
             

@@ -148,6 +148,14 @@ public class DocumentService {
      * @return 用户可访问的文件列表
      */
     public List<FileUpload> getAccessibleFiles(String userId, String orgTags) {
+        String role = findUserByIdentifier(userId)
+                .map(User::getRole)
+                .map(Enum::name)
+                .orElse("USER");
+        return getAccessibleFiles(userId, orgTags, role);
+    }
+
+    public List<FileUpload> getAccessibleFiles(String userId, String orgTags, String role) {
         logger.info("获取用户可访问文件列表: userId={}", userId);
         
         try {
@@ -160,7 +168,10 @@ public class DocumentService {
             
             // 使用有效标签查询文件
             List<FileUpload> files;
-            if (userEffectiveTags.isEmpty()) {
+            if ("ADMIN".equals(role)) {
+                files = fileUploadRepository.findAll();
+                logger.debug("管理员返回全部文件");
+            } else if (userEffectiveTags.isEmpty()) {
                 // 如果用户没有任何组织标签，只返回自己的文件和公开文件
                 files = fileUploadRepository.findByUserIdsOrIsPublicTrue(ownerIds);
                 logger.debug("用户无组织标签，仅返回个人和公开文件");
@@ -170,8 +181,14 @@ public class DocumentService {
                 logger.debug("使用有效组织标签查询文件");
             }
             
-            logger.info("成功获取用户可访问文件列表: userId={}, fileCount={}", userId, files.size());
-            return files;
+            List<FileUpload> accessibleFiles = files.stream()
+                    .filter(file -> !DocumentPermissionPolicy.isPrivateOrgTag(file.getOrgTag())
+                            || "ADMIN".equals(role)
+                            || ownerIds.contains(file.getUserId()))
+                    .toList();
+
+            logger.info("成功获取用户可访问文件列表: userId={}, fileCount={}", userId, accessibleFiles.size());
+            return accessibleFiles;
         } catch (Exception e) {
             logger.error("获取用户可访问文件列表失败: userId={}", userId, e);
             throw new RuntimeException("获取可访问文件列表失败: " + e.getMessage(), e);

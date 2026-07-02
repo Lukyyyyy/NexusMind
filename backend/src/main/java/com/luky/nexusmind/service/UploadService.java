@@ -66,12 +66,13 @@ public class UploadService {
      */
     public void uploadChunk(String fileMd5, int chunkIndex, long totalSize, String fileName, 
                            MultipartFile file, String orgTag, boolean isPublic, String userId) throws IOException {
+        boolean effectivePublic = DocumentPermissionPolicy.resolveUploadVisibility(orgTag, isPublic);
         // 获取文件类型信息
         String fileType = getFileType(fileName);
         String contentType = file.getContentType();
         
         logger.info("[uploadChunk] 开始处理分片上传请求 => fileMd5: {}, chunkIndex: {}, totalSize: {}, fileName: {}, fileType: {}, contentType: {}, fileSize: {}, orgTag: {}, isPublic: {}, userId: {}", 
-                   fileMd5, chunkIndex, totalSize, fileName, fileType, contentType, file.getSize(), orgTag, isPublic, userId);
+                   fileMd5, chunkIndex, totalSize, fileName, fileType, contentType, file.getSize(), orgTag, effectivePublic, userId);
         
         try {
             // 检查 file_upload 表中是否存在该 file_md5
@@ -80,7 +81,7 @@ public class UploadService {
             
             if (!fileExists) {
                 logger.info("创建新的文件记录 => fileMd5: {}, fileName: {}, fileType: {}, totalSize: {}, userId: {}, orgTag: {}, isPublic: {}", 
-                          fileMd5, fileName, fileType, totalSize, userId, orgTag, isPublic);
+                          fileMd5, fileName, fileType, totalSize, userId, orgTag, effectivePublic);
                 // 插入 file_upload 表
                 FileUpload fileUpload = new FileUpload();
                 fileUpload.setFileMd5(fileMd5);
@@ -89,7 +90,7 @@ public class UploadService {
                 fileUpload.setStatus(0); // 0 表示上传中
                 fileUpload.setUserId(userId); // 设置上传用户ID
                 fileUpload.setOrgTag(orgTag); // 设置组织标签
-                fileUpload.setPublic(isPublic); // 设置是否公开
+                fileUpload.setPublic(effectivePublic); // 私人空间文档不可公开
                 try {
                     fileUploadRepository.save(fileUpload);
                     logger.info("文件记录创建成功 => fileMd5: {}, fileName: {}, fileType: {}", fileMd5, fileName, fileType);

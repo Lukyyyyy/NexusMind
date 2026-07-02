@@ -16,6 +16,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import co.elastic.clients.elasticsearch._types.query_dsl.Operator;
+import co.elastic.clients.elasticsearch._types.query_dsl.Query;
 
 import java.util.Collections;
 import java.util.List;
@@ -70,6 +71,7 @@ public class HybridSearchService {
 
             // 获取用户的数据库ID用于权限过滤
             String userDbId = getUserDbId(userId);
+            boolean administrator = isAdministrator(userId);
             logger.debug("用户 {} 的数据库ID: {}", userId, userDbId);
 
             // 生成查询向量
@@ -78,7 +80,7 @@ public class HybridSearchService {
             // 如果向量生成失败，仅使用文本匹配
             if (queryVector == null) {
                 logger.warn("向量生成失败，仅使用文本匹配进行搜索");
-                return textOnlySearchWithPermission(query, userDbId, userEffectiveTags, topK);
+                return textOnlySearchWithPermission(query, userDbId, userEffectiveTags, administrator, topK);
             }
 
             logger.debug("向量生成成功，开始执行混合搜索 KNN");
@@ -95,25 +97,7 @@ public class HybridSearchService {
                 // 必须命中关键词 + 权限过滤
                 s.query(q -> q.bool(b -> b
                         .must(mst -> mst.match(m -> m.field("textContent").query(query)))
-                        .filter(f -> f.bool(bf -> bf
-                                // 条件1: 用户可访问自己的文档
-                                .should(s1 -> s1.term(t -> t.field("userId").value(userDbId)))
-                                // 条件2: 公开文档
-                                .should(s2 -> s2.term(t -> t.field("public").value(true)))
-                                // 条件3: 组织标签
-                                .should(s3 -> {
-                                    if (userEffectiveTags.isEmpty()) {
-                                        return s3.matchNone(mn -> mn);
-                                    } else if (userEffectiveTags.size() == 1) {
-                                        return s3.term(t -> t.field("orgTag").value(userEffectiveTags.get(0)));
-                                    } else {
-                                        return s3.bool(inner -> {
-                                            userEffectiveTags.forEach(tag -> inner
-                                                    .should(sh2 -> sh2.term(t -> t.field("orgTag").value(tag))));
-                                            return inner;
-                                        });
-                                    }
-                                })))));
+                        .filter(buildPermissionQuery(userDbId, userEffectiveTags, administrator))));
 
                 // 第二阶段 BM25 rescore
                 s.rescore(r -> r
@@ -158,7 +142,8 @@ public class HybridSearchService {
             // 发生异常时尝试使用纯文本搜索作为后备方案
             try {
                 logger.info("尝试使用纯文本搜索作为后备方案");
-                return textOnlySearchWithPermission(query, getUserDbId(userId), getUserEffectiveOrgTags(userId), topK);
+                return textOnlySearchWithPermission(query, getUserDbId(userId), getUserEffectiveOrgTags(userId),
+                        isAdministrator(userId), topK);
             } catch (Exception fallbackError) {
                 logger.error("后备搜索也失败", fallbackError);
                 return Collections.emptyList();
@@ -170,7 +155,7 @@ public class HybridSearchService {
      * 仅使用文本匹配的带权限搜索方法
      */
     private List<SearchResult> textOnlySearchWithPermission(String query, String userDbId,
-            List<String> userEffectiveTags, int topK) {
+            List<String> userEffectiveTags, boolean administrator, int topK) {
         try {
             logger.debug("开始执行纯文本搜索，用户数据库ID: {}, 标签: {}", userDbId, userEffectiveTags);
 
@@ -184,38 +169,7 @@ public class HybridSearchService {
                                                     .field("textContent")
                                                     .query(query)))
                                     // 权限过滤
-                                    .filter(f -> f
-                                            .bool(bf -> bf
-                                                    // 条件1: 用户可以访问自己的文档
-                                                    .should(s1 -> s1
-                                                            .term(t -> t
-                                                                    .field("userId")
-                                                                    .value(userDbId)))
-                                                    // 条件2: 用户可以访问公开的文档
-                                                    .should(s2 -> s2
-                                                            .term(t -> t
-                                                                    .field("public")
-                                                                    .value(true)))
-                                                    // 条件3: 用户可以访问其所属组织的文档（包含层级关系）
-                                                    .should(s3 -> {
-                                                        if (userEffectiveTags.isEmpty()) {
-                                                            return s3.matchNone(mn -> mn);
-                                                        } else if (userEffectiveTags.size() == 1) {
-                                                            // 单个标签使用 term 查询
-                                                            return s3.term(t -> t
-                                                                    .field("orgTag")
-                                                                    .value(userEffectiveTags.get(0)));
-                                                        } else {
-                                                            // 多个标签使用 bool should 组合多个 term 查询
-                                                            return s3.bool(innerBool -> {
-                                                                userEffectiveTags.forEach(
-                                                                        tag -> innerBool.should(sh -> sh.term(t -> t
-                                                                                .field("orgTag")
-                                                                                .value(tag))));
-                                                                return innerBool;
-                                                            });
-                                                        }
-                                                    })))))
+                                    .filter(buildPermissionQuery(userDbId, userEffectiveTags, administrator))))
                     .minScore(0.3d)
                     .size(topK),
                     EsDocument.class);
@@ -251,12 +205,11 @@ public class HybridSearchService {
     }
 
     /**
-     * 原始搜索方法，不包含权限过滤，保留向后兼容性
+     * 匿名搜索方法，仅返回公开且不属于私人空间的文档。
      */
     public List<SearchResult> search(String query, int topK) {
         try {
             logger.debug("开始混合检索，查询: {}, topK: {}", query, topK);
-            logger.warn("使用了没有权限过滤的搜索方法，建议使用 searchWithPermission 方法");
 
             // 生成查询向量
             final List<Float> queryVector = embedToVectorList(query, null);
@@ -276,8 +229,9 @@ public class HybridSearchService {
                         .k(recallK)
                         .numCandidates(recallK));
 
-                // 过滤仅保留包含关键词的文本
-                s.query(q -> q.match(m -> m.field("textContent").query(query)));
+                s.query(q -> q.bool(b -> b
+                        .must(m -> m.match(match -> match.field("textContent").query(query)))
+                        .filter(buildPublicPermissionQuery())));
 
                 // rescore BM25
                 s.rescore(r -> r
@@ -322,10 +276,9 @@ public class HybridSearchService {
     private List<SearchResult> textOnlySearch(String query, int topK) throws Exception {
         SearchResponse<EsDocument> response = esClient.search(s -> s
                 .index("knowledge_base")
-                .query(q -> q
-                        .match(m -> m
-                                .field("textContent")
-                                .query(query)))
+                .query(q -> q.bool(b -> b
+                        .must(m -> m.match(match -> match.field("textContent").query(query)))
+                        .filter(buildPublicPermissionQuery())))
                 .size(topK),
                 EsDocument.class);
 
@@ -423,6 +376,60 @@ public class HybridSearchService {
         } catch (Exception e) {
             logger.error("获取用户数据库ID失败: {}", e.getMessage(), e);
             throw new RuntimeException("获取用户数据库ID失败", e);
+        }
+    }
+
+    Query buildPermissionQuery(String userDbId, List<String> userEffectiveTags, boolean administrator) {
+        if (administrator) {
+            return Query.of(q -> q.matchAll(m -> m));
+        }
+
+        List<String> sharedTags = userEffectiveTags.stream()
+                .filter(tag -> !DocumentPermissionPolicy.isPrivateOrgTag(tag))
+                .toList();
+        Query privateTag = Query.of(q -> q.prefix(p -> p
+                .field("orgTag")
+                .value(DocumentPermissionPolicy.PRIVATE_TAG_PREFIX)));
+
+        return Query.of(q -> q.bool(b -> b
+                .minimumShouldMatch("1")
+                .should(owner -> owner.term(t -> t.field("userId").value(userDbId)))
+                .should(publicDocument -> publicDocument.bool(shared -> shared
+                        .must(isPublic -> isPublic.term(t -> t.field("public").value(true)))
+                        .mustNot(privateTag)))
+                .should(organizationDocument -> organizationDocument.bool(shared -> {
+                    shared.mustNot(privateTag);
+                    if (sharedTags.isEmpty()) {
+                        return shared.must(noTags -> noTags.matchNone(m -> m));
+                    }
+                    return shared.must(tags -> tags.bool(tagOptions -> {
+                        sharedTags.forEach(tag -> tagOptions
+                                .should(option -> option.term(t -> t.field("orgTag").value(tag))));
+                        return tagOptions.minimumShouldMatch("1");
+                    }));
+                }))));
+    }
+
+    Query buildPublicPermissionQuery() {
+        return Query.of(q -> q.bool(b -> b
+                .must(isPublic -> isPublic.term(t -> t.field("public").value(true)))
+                .mustNot(privateTag -> privateTag.prefix(p -> p
+                        .field("orgTag")
+                        .value(DocumentPermissionPolicy.PRIVATE_TAG_PREFIX)))));
+    }
+
+    private boolean isAdministrator(String userId) {
+        try {
+            User user;
+            try {
+                user = userRepository.findById(Long.parseLong(userId)).orElse(null);
+            } catch (NumberFormatException e) {
+                user = userRepository.findByUsername(userId).orElse(null);
+            }
+            return user != null && user.getRole() == User.Role.ADMIN;
+        } catch (Exception e) {
+            logger.warn("无法确定用户角色，按普通用户权限处理: userId={}", userId, e);
+            return false;
         }
     }
 

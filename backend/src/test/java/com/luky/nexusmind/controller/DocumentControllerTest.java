@@ -66,7 +66,7 @@ class DocumentControllerTest {
         ReflectionTestUtils.setField(controller, "organizationTagRepository", proxy(OrganizationTagRepository.class, (proxy, method, args) -> Optional.empty()));
         ReflectionTestUtils.setField(controller, "userRepository", fixedUsers());
 
-        ResponseEntity<?> response = controller.getAccessibleFiles("2", "default,PRIVATE_Jack", null, null, null);
+        ResponseEntity<?> response = controller.getAccessibleFiles("2", "default,PRIVATE_Jack", "USER", null, null, null);
 
         @SuppressWarnings("unchecked")
         Map<String, Object> body = (Map<String, Object>) response.getBody();
@@ -97,7 +97,7 @@ class DocumentControllerTest {
         ReflectionTestUtils.setField(controller, "organizationTagRepository", proxy(OrganizationTagRepository.class, (proxy, method, args) -> Optional.empty()));
         ReflectionTestUtils.setField(controller, "userRepository", fixedUsers());
 
-        ResponseEntity<?> response = controller.getAccessibleFiles("2", "default,audio", "audio", null, false);
+        ResponseEntity<?> response = controller.getAccessibleFiles("2", "default,audio", "USER", "audio", null, false);
 
         @SuppressWarnings("unchecked")
         Map<String, Object> body = (Map<String, Object>) response.getBody();
@@ -129,7 +129,7 @@ class DocumentControllerTest {
         ReflectionTestUtils.setField(controller, "organizationTagRepository", proxy(OrganizationTagRepository.class, (proxy, method, args) -> Optional.empty()));
         ReflectionTestUtils.setField(controller, "userRepository", fixedUsers());
 
-        ResponseEntity<?> response = controller.getAccessibleFiles("2", "default,audio,vision", null, List.of("default", "audio"), null);
+        ResponseEntity<?> response = controller.getAccessibleFiles("2", "default,audio,vision", "USER", null, List.of("default", "audio"), null);
 
         @SuppressWarnings("unchecked")
         Map<String, Object> body = (Map<String, Object>) response.getBody();
@@ -182,6 +182,11 @@ class DocumentControllerTest {
 
         @Override
         public List<FileUpload> getAccessibleFiles(String userId, String orgTags) {
+            return files;
+        }
+
+        @Override
+        public List<FileUpload> getAccessibleFiles(String userId, String orgTags, String role) {
             return files;
         }
     }

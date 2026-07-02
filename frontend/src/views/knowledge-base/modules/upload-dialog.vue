@@ -21,6 +21,9 @@ const { formRef, validate, restoreValidation } = useNaiveForm();
 const { defaultRequiredRule } = useFormRules();
 
 const model = ref<Api.KnowledgeBase.Form>(createDefaultModel());
+const isPrivateSpace = computed(
+  () => typeof model.value.orgTag === 'string' && model.value.orgTag.startsWith('PRIVATE_')
+);
 
 function createDefaultModel(): Api.KnowledgeBase.Form {
   return {
@@ -61,6 +64,13 @@ watch(visible, () => {
   }
 });
 
+watch(
+  () => model.value.orgTag,
+  orgTag => {
+    if (typeof orgTag === 'string' && orgTag.startsWith('PRIVATE_')) model.value.isPublic = false;
+  }
+);
+
 function onUpdate(option: unknown) {
   if (option) model.value.orgTagName = (option as Api.OrgTag.Item).name;
 }
@@ -92,13 +102,15 @@ function onUpdate(option: unknown) {
       </NFormItem>
 
       <NFormItem label="是否公开" path="isPublic">
-        <NRadioGroup v-model:value="model.isPublic" name="radiogroup">
+        <NText v-if="isPrivateSpace" depth="3">私人空间文档固定为私有</NText>
+        <NRadioGroup v-else v-model:value="model.isPublic" name="visibility">
           <NSpace :size="16">
             <NRadio :value="true">公开</NRadio>
             <NRadio :value="false">私有</NRadio>
           </NSpace>
         </NRadioGroup>
       </NFormItem>
+
       <NFormItem label="解析方式" path="parseEngine">
         <NRadioGroup v-model:value="model.parseEngine" name="parseEngine">
           <NSpace vertical :size="10">

@@ -2,6 +2,7 @@ package com.luky.nexusmind.config;
 
 import com.luky.nexusmind.model.FileUpload;
 import com.luky.nexusmind.repository.FileUploadRepository;
+import com.luky.nexusmind.service.DocumentPermissionPolicy;
 import com.luky.nexusmind.utils.JwtUtils;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -42,7 +43,6 @@ public class OrgTagAuthorizationFilter extends OncePerRequestFilter {
     private static final String DEFAULT_ORG_TAG = "default"; // 默认组织标签
     private static final String LEGACY_DEFAULT_ORG_TAG = "DEFAULT"; // 旧版默认组织标签
     private static final String DEFAULT_ORG_NAME = "默认组织"; // 历史数据可能存了展示名
-    private static final String PRIVATE_TAG_PREFIX = "PRIVATE_"; // 私人组织标签前缀
 
     @Autowired
     private JwtUtils jwtUtils;
@@ -142,6 +142,28 @@ public class OrgTagAuthorizationFilter extends OncePerRequestFilter {
             }
             
             String resourceOrgTag = resourceInfo.getOrgTag();
+
+            // 私人空间权限优先于公开标记，避免错误的 isPublic=true 绕过授权。
+            if (DocumentPermissionPolicy.isPrivateOrgTag(resourceOrgTag)) {
+                String token = extractToken(request);
+                if (token == null) {
+                    response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+                    return;
+                }
+
+                String username = jwtUtils.extractUsernameFromToken(token);
+                String authenticatedUserId = jwtUtils.extractUserIdFromToken(token);
+                String role = jwtUtils.extractRoleFromToken(token);
+                boolean owner = resourceInfo.getOwner().equals(username)
+                        || resourceInfo.getOwner().equals(authenticatedUserId);
+                if (owner || "ADMIN".equals(role)) {
+                    filterChain.doFilter(request, response);
+                } else {
+                    logger.debug("私人资源，且用户不是拥有者或管理员，拒绝访问");
+                    response.setStatus(HttpServletResponse.SC_FORBIDDEN);
+                }
+                return;
+            }
             
             // 如果是公开资源、资源没有组织标签、或属于默认组织，直接放行
             if (resourceInfo.isPublic() || 
@@ -176,14 +198,6 @@ public class OrgTagAuthorizationFilter extends OncePerRequestFilter {
             if ("ADMIN".equals(role)) {
                 logger.debug("用户是管理员，放行请求");
                 filterChain.doFilter(request, response);
-                return;
-            }
-            
-            // 检查是否为私人组织标签资源
-            if (resourceOrgTag.startsWith(PRIVATE_TAG_PREFIX)) {
-                // 私人标签资源只允许拥有者访问，此处已排除拥有者和管理员，拒绝访问
-                logger.debug("私人资源，且用户不是拥有者或管理员，拒绝访问");
-                response.setStatus(HttpServletResponse.SC_FORBIDDEN);
                 return;
             }
             
