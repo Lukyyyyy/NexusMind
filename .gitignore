@@ -80,6 +80,7 @@ backend/src/main/resources/application.yml~
 /backend/logs
 /.pnpm-store/
 /.playwright-mcp/
+/.worktrees/
 
 # Output
 /output/
