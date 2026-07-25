@@ -5,6 +5,7 @@ import com.luky.nexusmind.repository.FileProcessingStatusRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.List;
@@ -38,8 +39,52 @@ public class FileProcessingStatusService {
         status.setParsedChunkCount(0);
         status.setVectorizedCount(0);
         status.setEsDocumentCount(0L);
+        status.setProcessingStartedAt(LocalDateTime.now());
+        status.setAccumulatedProcessingDurationMillis(0L);
         status.setCompletedAt(null);
         return saveAndPublish(status);
+    }
+
+    /**
+     * 将失败任务原子地认领为待处理，避免用户连续点击产生重复 Kafka 任务。
+     * 与首次入队不同，重新处理会保留已经完成阶段的统计信息。
+     */
+    @Transactional
+    public boolean claimRetry(FileProcessingTask task) {
+        Optional<FileProcessingStatus> existing = repository.findByFileMd5AndUserIdForUpdate(
+                task.getFileMd5(), task.getUserId());
+        if (existing.isEmpty() || existing.get().getState() != ProcessingState.FAILED) {
+            return false;
+        }
+
+        FileProcessingStatus status = existing.get();
+        status.setAccumulatedProcessingDurationMillis(
+                accumulatedDurationWithPreviousAttempt(status));
+        status.setParseEngine(task.getParseEngine() == null ? status.getParseEngine() : task.getParseEngine());
+        status.setChunkSize(task.getChunkSize() == null ? status.getChunkSize() : task.getChunkSize());
+        status.setCurrentStage(ProcessingStage.QUEUED);
+        status.setState(ProcessingState.PENDING);
+        status.setMessage("等待重新处理");
+        status.setErrorMessage(null);
+        status.setProcessingStartedAt(LocalDateTime.now());
+        status.setCompletedAt(null);
+        saveAndPublish(status);
+        return true;
+    }
+
+    private long accumulatedDurationWithPreviousAttempt(FileProcessingStatus status) {
+        long accumulated = status.getAccumulatedProcessingDurationMillis() == null
+                ? 0L
+                : status.getAccumulatedProcessingDurationMillis();
+        LocalDateTime attemptStartedAt = status.getProcessingStartedAt();
+        LocalDateTime attemptEndedAt = status.getCompletedAt() != null
+                ? status.getCompletedAt()
+                : status.getUpdatedAt();
+        if (attemptStartedAt == null || attemptEndedAt == null) {
+            return accumulated;
+        }
+        return accumulated + Math.max(0L,
+                Duration.between(attemptStartedAt, attemptEndedAt).toMillis());
     }
 
     @Transactional
@@ -58,6 +103,9 @@ public class FileProcessingStatusService {
     }
 
     private void applyRunning(FileProcessingStatus status, ProcessingStage stage, String message) {
+        if (status.getProcessingStartedAt() == null) {
+            status.setProcessingStartedAt(LocalDateTime.now());
+        }
         if (shouldAdvanceStage(status.getCurrentStage(), stage)) {
             status.setCurrentStage(stage);
             status.setMessage(message);

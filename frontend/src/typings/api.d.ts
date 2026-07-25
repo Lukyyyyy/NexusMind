@@ -310,6 +310,7 @@ declare namespace Api {
       vectorizedCount?: number;
       esDocumentCount?: number;
       processingDurationMillis?: number | null;
+      processingAccumulatedDurationMillis?: number | null;
       processingStartedAt?: string | null;
       processingUpdatedAt?: string | null;
       processingCompletedAt?: string | null;
@@ -348,6 +349,7 @@ declare namespace Api {
         parsedChunkCount?: number;
         vectorizedCount?: number;
         processingDurationMillis?: number | null;
+        processingAccumulatedDurationMillis?: number | null;
         processingStartedAt?: string | null;
         processingUpdatedAt?: string | null;
         processingCompletedAt?: string | null;

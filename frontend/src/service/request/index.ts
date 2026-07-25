@@ -107,8 +107,8 @@ function getFlatRequest(options: Partial<RequestOption<App.Service.Response>> = 
 
         if (error.code === 'ERR_CANCELED') return;
 
-        // handle 403 Forbidden error - user needs to login
-        if (error.response?.status === 403) {
+        // 只有 401 表示登录身份失效；403 只是当前用户无权执行该操作，不能清空登录态。
+        if (error.response?.status === 401) {
           const authStore = useAuthStore();
           authStore.resetStore();
           return;

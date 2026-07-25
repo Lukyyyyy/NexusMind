@@ -747,4 +747,30 @@ public class UploadService {
             span.close();
         }
     }
+
+    /**
+     * 为已经合并的原文件重新生成访问地址。重新处理时分片已经被清理，
+     * 因此不能再次执行合并，只需复用 MinIO 中的合并文件。
+     */
+    public String getMergedFileUrl(String fileName) {
+        String mergedPath = "merged/" + fileName;
+        try {
+            minioClient.statObject(
+                    StatObjectArgs.builder()
+                            .bucket("uploads")
+                            .object(mergedPath)
+                            .build()
+            );
+            return minioClient.getPresignedObjectUrl(
+                    GetPresignedObjectUrlArgs.builder()
+                            .method(Method.GET)
+                            .bucket("uploads")
+                            .object(mergedPath)
+                            .expiry(1, TimeUnit.HOURS)
+                            .build()
+            );
+        } catch (Exception e) {
+            throw new RuntimeException("合并文件不存在或无法访问", e);
+        }
+    }
 }

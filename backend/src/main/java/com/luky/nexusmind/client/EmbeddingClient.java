@@ -38,6 +38,9 @@ public class EmbeddingClient {
 
     @Value("${embedding.api.dimension:2048}")
     private int dimension;
+
+    @Value("${embedding.api.max-response-size-bytes:16777216}")
+    private int maxResponseSizeBytes;
     
     private static final Logger logger = LoggerFactory.getLogger(EmbeddingClient.class);
     private final ObjectMapper objectMapper;
@@ -192,6 +195,8 @@ public class EmbeddingClient {
     private WebClient buildWebClient(ModelConfigService.ResolvedModelConfig modelConfig) {
         WebClient.Builder builder = WebClient.builder()
                 .baseUrl(modelConfig.baseUrl())
+                .codecs(configurer -> configurer.defaultCodecs()
+                        .maxInMemorySize(maxResponseSizeBytes))
                 .defaultHeader(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE);
         if (modelConfig.apiKey() != null && !modelConfig.apiKey().trim().isEmpty()) {
             builder.defaultHeader(HttpHeaders.AUTHORIZATION, "Bearer " + modelConfig.apiKey());

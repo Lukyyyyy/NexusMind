@@ -84,6 +84,15 @@ function handleChunkView(row: Api.KnowledgeBase.UploadTask) {
 
 function getFileActionOptions(row: Api.KnowledgeBase.UploadTask): DropdownOption[] {
   return [
+    ...(row.processingState === 'FAILED'
+      ? [
+          {
+            label: retryingFileMd5.value === row.fileMd5 ? '正在重新处理' : '重新处理',
+            key: 'retry',
+            disabled: retryingFileMd5.value === row.fileMd5
+          }
+        ]
+      : []),
     {
       label: '查看切片',
       key: 'chunks',
@@ -97,6 +106,11 @@ function getFileActionOptions(row: Api.KnowledgeBase.UploadTask): DropdownOption
 }
 
 function handleFileAction(key: string, row: Api.KnowledgeBase.UploadTask) {
+  if (key === 'retry') {
+    handleRetryProcessing(row);
+    return;
+  }
+
   if (key === 'chunks') {
     handleChunkView(row);
     return;
@@ -227,6 +241,7 @@ const {
 
 const store = useKnowledgeBaseStore();
 const { tasks } = storeToRefs(store);
+const retryingFileMd5 = ref<string | null>(null);
 const durationNow = ref(Date.now());
 const sortedTasks = computed(() => {
   const sorted = [...tasks.value];
@@ -648,9 +663,11 @@ async function refreshProcessingStatusSilently(task: Api.KnowledgeBase.UploadTas
   task.actualParseEngine = data.actualParseEngine ?? task.actualParseEngine ?? task.parseEngine;
   task.actualChunkSize = data.actualChunkSize ?? task.actualChunkSize ?? task.chunkSize;
   task.processingDurationMillis = data.processingDurationMillis ?? task.processingDurationMillis;
+  task.processingAccumulatedDurationMillis =
+    data.processingAccumulatedDurationMillis ?? task.processingAccumulatedDurationMillis;
   task.processingStartedAt = data.processingStartedAt ?? task.processingStartedAt;
   task.processingUpdatedAt = data.processingUpdatedAt ?? task.processingUpdatedAt;
-  task.processingCompletedAt = data.processingCompletedAt ?? task.processingCompletedAt;
+  task.processingCompletedAt = data.processingCompletedAt ?? null;
   task.serverTime = data.serverTime ?? task.serverTime;
   task.esDocumentCount = data.esDocumentCount;
   if (typeof data.parsedChunkCount === 'number') task.parsedChunkCount = data.parsedChunkCount;
@@ -675,9 +692,11 @@ function applyProcessingStatus(status: Api.KnowledgeBase.ProcessingStatus) {
   task.actualParseEngine = status.actualParseEngine ?? task.actualParseEngine ?? task.parseEngine;
   task.actualChunkSize = status.actualChunkSize ?? task.actualChunkSize ?? task.chunkSize;
   task.processingDurationMillis = status.processingDurationMillis ?? task.processingDurationMillis;
+  task.processingAccumulatedDurationMillis =
+    status.processingAccumulatedDurationMillis ?? task.processingAccumulatedDurationMillis;
   task.processingStartedAt = status.processingStartedAt ?? task.processingStartedAt;
   task.processingUpdatedAt = status.processingUpdatedAt ?? task.processingUpdatedAt;
-  task.processingCompletedAt = status.processingCompletedAt ?? task.processingCompletedAt;
+  task.processingCompletedAt = status.processingCompletedAt ?? null;
   task.serverTime = status.serverTime ?? task.serverTime;
   task.esDocumentCount = status.esDocumentCount ?? task.esDocumentCount;
   if (typeof status.parsedChunkCount === 'number') task.parsedChunkCount = status.parsedChunkCount;
@@ -686,13 +705,35 @@ function applyProcessingStatus(status: Api.KnowledgeBase.ProcessingStatus) {
   if (typeof status.esDocumentCount === 'number') task.vectorizedCount = status.esDocumentCount;
 }
 
+async function handleRetryProcessing(row: Api.KnowledgeBase.UploadTask) {
+  if (retryingFileMd5.value || row.processingState !== 'FAILED') return;
+
+  retryingFileMd5.value = row.fileMd5;
+  const { error } = await request<{ fileMd5: string; resumeFromStage?: string }>({
+    url: `/upload/${encodeURIComponent(row.fileMd5)}/retry`,
+    method: 'post'
+  });
+
+  if (!error) {
+    row.processingStage = 'QUEUED';
+    row.processingState = 'PENDING';
+    row.processingMessage = '等待重新处理';
+    row.processingError = null;
+    row.processingCompletedAt = null;
+    window.$message?.success('已开始重新处理');
+    await refreshProcessingStatusSilently(row);
+  }
+  retryingFileMd5.value = null;
+}
+
 function resolveProcessingDuration(row: Api.KnowledgeBase.UploadTask, now: number) {
   const startedAt = parseDate(row.processingStartedAt);
   if (startedAt) {
+    const accumulated = row.processingAccumulatedDurationMillis ?? 0;
     const completedAt = parseDate(row.processingCompletedAt);
     const failedAt = row.processingState === 'FAILED' ? parseDate(row.processingUpdatedAt) : null;
     const endedAt = completedAt ?? failedAt ?? now;
-    return Math.max(0, endedAt - startedAt);
+    return accumulated + Math.max(0, endedAt - startedAt);
   }
 
   return row.processingDurationMillis;

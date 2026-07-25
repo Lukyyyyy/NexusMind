@@ -5,6 +5,8 @@ import com.luky.nexusmind.model.FileProcessingTask;
 import com.luky.nexusmind.model.FileProcessingStatus;
 import com.luky.nexusmind.model.FileUpload;
 import com.luky.nexusmind.model.ParseEngine;
+import com.luky.nexusmind.model.ProcessingStage;
+import com.luky.nexusmind.model.ProcessingState;
 import com.luky.nexusmind.repository.FileUploadRepository;
 import com.luky.nexusmind.repository.DocumentVectorRepository;
 import com.luky.nexusmind.service.ElasticsearchService;
@@ -308,6 +310,91 @@ public class UploadController {
     }
 
     /**
+     * 重新处理失败的文件。上传和合并结果会直接复用，消费者根据失败阶段及
+     * 实际产物决定是否跳过解析、切片和索引步骤。
+     */
+    @PostMapping("/{fileMd5}/retry")
+    public ResponseEntity<Map<String, Object>> retryProcessing(
+            @PathVariable String fileMd5,
+            @RequestAttribute("userId") String userId) {
+        Optional<FileUpload> fileUploadOptional = fileUploadRepository.findByFileMd5AndUserId(fileMd5, userId);
+        if (fileUploadOptional.isEmpty()) {
+            return errorResponse(HttpStatus.NOT_FOUND, "文件不存在");
+        }
+
+        FileUpload fileUpload = fileUploadOptional.get();
+        if (fileUpload.getStatus() != 1) {
+            return errorResponse(HttpStatus.CONFLICT, "文件尚未上传完成，请先完成上传");
+        }
+
+        Optional<FileProcessingStatus> statusOptional =
+                processingStatusService.findByFileMd5AndUserId(fileMd5, userId);
+        if (statusOptional.isEmpty() || statusOptional.get().getState() != ProcessingState.FAILED) {
+            return errorResponse(HttpStatus.CONFLICT, "当前文件不是处理失败状态，无需重新处理");
+        }
+
+        FileProcessingStatus failedStatus = statusOptional.get();
+        ProcessingStage failedStage = failedStatus.getCurrentStage();
+        long existingChunkCount = documentVectorRepository.countDistinctChunksByFileMd5(fileMd5);
+        boolean canReuseParsedChunks = existingChunkCount > 0
+                && (failedStage == ProcessingStage.VECTORIZING
+                || failedStage == ProcessingStage.INDEXING
+                || failedStage == ProcessingStage.COMPLETED);
+        String objectUrl = null;
+        if (!canReuseParsedChunks) {
+            try {
+                objectUrl = uploadService.getMergedFileUrl(fileUpload.getFileName());
+            } catch (RuntimeException e) {
+                return errorResponse(HttpStatus.CONFLICT, "原始文件不可用，请删除后重新上传");
+            }
+        }
+
+        FileProcessingTask task = new FileProcessingTask(
+                fileMd5,
+                objectUrl,
+                fileUpload.getFileName(),
+                fileUpload.getUserId(),
+                fileUpload.getOrgTag(),
+                fileUpload.isPublic(),
+                failedStatus.getParseEngine(),
+                failedStatus.getChunkSize()
+        );
+        task.setResumeFromStage(failedStage);
+
+        if (!processingStatusService.claimRetry(task)) {
+            return errorResponse(HttpStatus.CONFLICT, "文件已经开始重新处理，请勿重复提交");
+        }
+
+        AiTraceService.TraceSpan traceSpan = aiTraceService.startFileSpan(
+                "file.processing.retry", userId, fileMd5, fileUpload.getFileName());
+        task.setTraceparent(traceSpan.traceparent());
+        try {
+            kafkaTemplate.executeInTransaction(kt -> {
+                kt.send(kafkaConfig.getFileProcessingTopic(), task);
+                return true;
+            });
+            traceSpan.attribute("nexusmind.file.retry.from_stage",
+                    failedStage == null ? "unknown" : failedStage.name());
+
+            Map<String, Object> data = new HashMap<>();
+            data.put("fileMd5", fileMd5);
+            data.put("resumeFromStage", failedStage);
+            Map<String, Object> response = new HashMap<>();
+            response.put("code", 200);
+            response.put("message", "已开始重新处理");
+            response.put("data", data);
+            return ResponseEntity.ok(response);
+        } catch (RuntimeException e) {
+            traceSpan.error(e);
+            processingStatusService.markFailed(task, failedStage, e);
+            return errorResponse(HttpStatus.INTERNAL_SERVER_ERROR, "重新处理任务提交失败");
+        } finally {
+            traceSpan.end();
+            traceSpan.close();
+        }
+    }
+
+    /**
      * 合并文件分片接口
      *
      * @param request 包含文件MD5和文件名的请求体
@@ -515,6 +602,13 @@ public class UploadController {
                     String.format("chunkSize必须在%d到%d之间", minTextChunkSize, maxTextChunkSize));
         }
         return requestedChunkSize;
+    }
+
+    private ResponseEntity<Map<String, Object>> errorResponse(HttpStatus status, String message) {
+        Map<String, Object> response = new HashMap<>();
+        response.put("code", status.value());
+        response.put("message", message);
+        return ResponseEntity.status(status).body(response);
     }
 
     /**

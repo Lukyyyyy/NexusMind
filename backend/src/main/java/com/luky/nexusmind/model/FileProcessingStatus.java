@@ -61,6 +61,12 @@ public class FileProcessingStatus {
     @Column(name = "es_document_count")
     private Long esDocumentCount = 0L;
 
+    @Column(name = "processing_started_at")
+    private LocalDateTime processingStartedAt;
+
+    @Column(name = "accumulated_processing_duration_millis")
+    private Long accumulatedProcessingDurationMillis = 0L;
+
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)
     private LocalDateTime createdAt;

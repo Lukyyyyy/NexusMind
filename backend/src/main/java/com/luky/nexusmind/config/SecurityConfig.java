@@ -10,6 +10,7 @@ import org.springframework.security.config.annotation.web.configuration.EnableWe
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import jakarta.servlet.http.HttpServletResponse;
 
 /**
  * 配置Spring Security的类
@@ -77,6 +78,12 @@ public class SecurityConfig {
                             .requestMatchers("/api/v1/users/primary-org").hasAnyRole("USER", "ADMIN")
                             // 其他请求需要认证
                             .anyRequest().authenticated())
+                    // 未登录与无权限必须使用不同状态码，避免前端将普通 403 误判为登录失效。
+                    .exceptionHandling(exceptions -> exceptions
+                            .authenticationEntryPoint((request, response, exception) ->
+                                    response.setStatus(HttpServletResponse.SC_UNAUTHORIZED))
+                            .accessDeniedHandler((request, response, exception) ->
+                                    response.setStatus(HttpServletResponse.SC_FORBIDDEN)))
                     // 配置会话管理策略
                     // 设置会话创建策略为STATELESS，表示不会创建会话，通常用于无状态的API应用
                     .sessionManagement(session -> session

@@ -20,6 +20,7 @@ public class FileProcessingTask {
     private ParseEngine parseEngine = ParseEngine.AUTO; // 文档解析引擎
     private Integer chunkSize; // 该文件解析时使用的文本切片大小
     private String traceparent; // OpenTelemetry trace context
+    private ProcessingStage resumeFromStage; // 手动重新处理时的失败阶段，用于判断可复用的中间产物
 
     public FileProcessingTask(String fileMd5, String filePath, String fileName,
                               String userId, String orgTag, boolean isPublic) {

@@ -2,8 +2,11 @@ package com.luky.nexusmind.consumer;
 
 import com.luky.nexusmind.config.KafkaConfig;
 import com.luky.nexusmind.model.FileProcessingTask;
+import com.luky.nexusmind.model.FileProcessingStatus;
 import com.luky.nexusmind.model.ProcessingStage;
+import com.luky.nexusmind.repository.DocumentVectorRepository;
 import com.luky.nexusmind.service.AiTraceService;
+import com.luky.nexusmind.service.ElasticsearchService;
 import com.luky.nexusmind.service.FileProcessingStatusService;
 import com.luky.nexusmind.service.ParseService;
 import com.luky.nexusmind.service.VectorizationService;
@@ -28,16 +31,22 @@ public class FileProcessingConsumer {
     private final VectorizationService vectorizationService;
     private final AiTraceService aiTraceService;
     private final FileProcessingStatusService processingStatusService;
+    private final DocumentVectorRepository documentVectorRepository;
+    private final ElasticsearchService elasticsearchService;
     @Autowired
     private KafkaConfig kafkaConfig;
 
 
     public FileProcessingConsumer(ParseService parseService, VectorizationService vectorizationService, AiTraceService aiTraceService,
-                                  FileProcessingStatusService processingStatusService) {
+                                  FileProcessingStatusService processingStatusService,
+                                  DocumentVectorRepository documentVectorRepository,
+                                  ElasticsearchService elasticsearchService) {
         this.parseService = parseService;
         this.vectorizationService = vectorizationService;
         this.aiTraceService = aiTraceService;
         this.processingStatusService = processingStatusService;
+        this.documentVectorRepository = documentVectorRepository;
+        this.elasticsearchService = elasticsearchService;
     }
 
     @KafkaListener(topics = "#{kafkaConfig.getFileProcessingTopic()}", groupId = "#{kafkaConfig.getFileProcessingGroupId()}")
@@ -62,38 +71,60 @@ public class FileProcessingConsumer {
             span.attribute("nexusmind.parse.chunk_size", task.getChunkSize());
         }
         try {
-            // 下载文件
-            AiTraceService.TraceSpan downloadSpan = aiTraceService.startFileSpan(
-                    "file.storage.download", task.getUserId(), task.getFileMd5(), task.getFileName())
-                    .attribute("storage.path.type", resolvePathType(task.getFilePath()));
-            try {
-                fileStream = downloadFileFromStorage(task.getFilePath());
-            } catch (Exception e) {
-                downloadSpan.error(e);
-                throw e;
-            } finally {
-                downloadSpan.end();
-                downloadSpan.close();
-            }
-            // 在 downloadFileFromStorage 返回后立即检查流是否可读
-            if (fileStream == null) {
-                throw new IOException("流为空");
+            ProcessingStage checkpointStage = resolveCheckpointStage(task);
+            long existingChunkCount = documentVectorRepository.countDistinctChunksByFileMd5(task.getFileMd5());
+            boolean canReuseParsedChunks = canReuseParsedChunks(checkpointStage, existingChunkCount);
+            span.attribute("nexusmind.file.retry.checkpoint_stage",
+                            checkpointStage == null ? "none" : checkpointStage.name())
+                    .attribute("nexusmind.file.retry.existing_chunk_count", existingChunkCount)
+                    .attribute("nexusmind.file.retry.reuse_parsed_chunks", canReuseParsedChunks);
+
+            if (canReuseParsedChunks) {
+                long existingEsDocumentCount = elasticsearchService.countByFileMd5(task.getFileMd5());
+                if (existingEsDocumentCount == existingChunkCount) {
+                    processingStatusService.markCompleted(task, Math.toIntExact(existingEsDocumentCount),
+                            existingEsDocumentCount);
+                    log.info("文件已完整入库，跳过重复处理，fileMd5: {}, chunks: {}",
+                            task.getFileMd5(), existingChunkCount);
+                    span.attribute("nexusmind.file.processing.status", "already_completed");
+                    return;
+                }
+                processingStatusService.markParsed(task, Math.toIntExact(existingChunkCount));
+                log.info("复用已完成的解析切片，fileMd5: {}, chunks: {}",
+                        task.getFileMd5(), existingChunkCount);
+            } else {
+                // 只有解析结果不可复用时才重新下载原文件。
+                AiTraceService.TraceSpan downloadSpan = aiTraceService.startFileSpan(
+                        "file.storage.download", task.getUserId(), task.getFileMd5(), task.getFileName())
+                        .attribute("storage.path.type", resolvePathType(task.getFilePath()));
+                try {
+                    fileStream = downloadFileFromStorage(task.getFilePath());
+                } catch (Exception e) {
+                    downloadSpan.error(e);
+                    throw e;
+                } finally {
+                    downloadSpan.end();
+                    downloadSpan.close();
+                }
+                if (fileStream == null) {
+                    throw new IOException("流为空");
+                }
+                if (!fileStream.markSupported()) {
+                    fileStream = new BufferedInputStream(fileStream);
+                }
+
+                processingStatusService.markRunning(task, ProcessingStage.PARSING, "正在解析文件");
+                int parsedChunkCount = parseService.parseAndSave(task.getFileMd5(), fileStream,
+                        task.getUserId(), task.getOrgTag(), task.isPublic(), task.getParseEngine(),
+                        task.getFileName(), task.getChunkSize());
+                processingStatusService.markParsed(task, parsedChunkCount);
+                log.info("文件解析完成，fileMd5: {}", task.getFileMd5());
             }
 
-            // 强制转换为可缓存流
-            if (!fileStream.markSupported()) {
-                fileStream = new BufferedInputStream(fileStream);
-            }
-
-            // 解析文件
-            processingStatusService.markRunning(task, ProcessingStage.PARSING, "正在解析文件");
-            int parsedChunkCount = parseService.parseAndSave(task.getFileMd5(), fileStream,
-                    task.getUserId(), task.getOrgTag(), task.isPublic(), task.getParseEngine(), task.getFileName(), task.getChunkSize());
-            processingStatusService.markParsed(task, parsedChunkCount);
-            log.info("文件解析完成，fileMd5: {}", task.getFileMd5());
-
-            // 向量化处理
+            // 向量不保存中间结果。重试向量化或入库前清理可能残留的 ES 文档，
+            // 然后对全部切片重新向量化，保证索引内容一致。
             processingStatusService.markRunning(task, ProcessingStage.VECTORIZING, "正在生成向量");
+            elasticsearchService.deleteByFileMd5(task.getFileMd5());
             int vectorizedCount = vectorizationService.vectorize(task.getFileMd5(),
                     task.getUserId(), task.getOrgTag(), task.isPublic());
             long esDocumentCount = vectorizedCount > 0 ? vectorizedCount : 0;
@@ -118,6 +149,24 @@ public class FileProcessingConsumer {
             span.end();
             span.close();
         }
+    }
+
+    private ProcessingStage resolveCheckpointStage(FileProcessingTask task) {
+        if (task.getResumeFromStage() != null) {
+            return task.getResumeFromStage();
+        }
+        return processingStatusService.findByFileMd5AndUserId(task.getFileMd5(), task.getUserId())
+                .map(FileProcessingStatus::getCurrentStage)
+                .orElse(null);
+    }
+
+    private boolean canReuseParsedChunks(ProcessingStage checkpointStage, long existingChunkCount) {
+        if (existingChunkCount <= 0 || checkpointStage == null) {
+            return false;
+        }
+        return checkpointStage == ProcessingStage.VECTORIZING
+                || checkpointStage == ProcessingStage.INDEXING
+                || checkpointStage == ProcessingStage.COMPLETED;
     }
 
     private String resolvePathType(String filePath) {

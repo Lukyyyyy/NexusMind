@@ -62,6 +62,7 @@ public class OrgTagAuthorizationFilter extends OncePerRequestFilter {
             if (path.matches(".*/upload/chunk.*") || 
                 path.matches(".*/upload/merge.*") || 
                 path.matches(".*/upload/status.*") || 
+                path.matches(".*/upload/[a-fA-F0-9]{32}/retry.*") ||
                 path.matches(".*/documents/uploads.*") ||
                 path.matches(".*/documents/accessible.*") ||
                 path.matches(".*/documents/[a-fA-F0-9]{32}/chunks.*") ||
@@ -75,6 +76,8 @@ public class OrgTagAuthorizationFilter extends OncePerRequestFilter {
                     operation = "合并分片";
                 } else if (path.contains("/status")) {
                     operation = "查询上传状态";
+                } else if (path.matches(".*/upload/[a-fA-F0-9]{32}/retry.*")) {
+                    operation = "重新处理文件";
                 } else if (path.contains("/uploads")) {
                     operation = "获取用户文档";
                 } else if (path.contains("/accessible")) {

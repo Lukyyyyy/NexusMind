@@ -78,7 +78,8 @@ public class ProcessingStatusEventService {
         data.put("parsedChunkCount", status.getParsedChunkCount());
         data.put("vectorizedCount", status.getVectorizedCount());
         data.put("esDocumentCount", status.getEsDocumentCount());
-        data.put("processingStartedAt", status.getCreatedAt());
+        data.put("processingStartedAt", resolveProcessingStartedAt(status));
+        data.put("processingAccumulatedDurationMillis", resolveAccumulatedDuration(status));
         data.put("processingUpdatedAt", status.getUpdatedAt());
         data.put("processingCompletedAt", status.getCompletedAt());
         data.put("processingDurationMillis", calculateProcessingDurationMillis(status));
@@ -87,7 +88,7 @@ public class ProcessingStatusEventService {
     }
 
     private Long calculateProcessingDurationMillis(FileProcessingStatus status) {
-        LocalDateTime startedAt = status.getCreatedAt();
+        LocalDateTime startedAt = resolveProcessingStartedAt(status);
         if (startedAt == null) {
             return null;
         }
@@ -100,7 +101,20 @@ public class ProcessingStatusEventService {
             endedAt = LocalDateTime.now();
         }
 
-        return Math.max(0L, Duration.between(startedAt, endedAt).toMillis());
+        return resolveAccumulatedDuration(status)
+                + Math.max(0L, Duration.between(startedAt, endedAt).toMillis());
+    }
+
+    private long resolveAccumulatedDuration(FileProcessingStatus status) {
+        return status.getAccumulatedProcessingDurationMillis() == null
+                ? 0L
+                : Math.max(0L, status.getAccumulatedProcessingDurationMillis());
+    }
+
+    private LocalDateTime resolveProcessingStartedAt(FileProcessingStatus status) {
+        return status.getProcessingStartedAt() != null
+                ? status.getProcessingStartedAt()
+                : status.getCreatedAt();
     }
 
     private void removeEmitter(String userId, SseEmitter emitter) {
