@@ -100,6 +100,13 @@ elasticsearch:
   username: elastic     # 安装后生成的默认用户
   password: ${ELASTICSEARCH_PASSWORD:}
 
+knowledge-graph:
+  enabled: ${KNOWLEDGE_GRAPH_ENABLED:true}
+  neo4j:
+    uri: ${NEO4J_URI:bolt://localhost:7687}
+    username: ${NEO4J_USERNAME:neo4j}
+    password: ${NEO4J_PASSWORD:}
+
 
 logging:
   level:

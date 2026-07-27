@@ -66,7 +66,16 @@ public class UploadService {
      */
     public void uploadChunk(String fileMd5, int chunkIndex, long totalSize, String fileName, 
                            MultipartFile file, String orgTag, boolean isPublic, String userId) throws IOException {
+        uploadChunk(fileMd5, chunkIndex, totalSize, fileName, file, orgTag, isPublic, null, userId);
+    }
+
+    public void uploadChunk(String fileMd5, int chunkIndex, long totalSize, String fileName,
+                           MultipartFile file, String orgTag, boolean isPublic, Boolean graphEnabled,
+                           String userId) throws IOException {
         boolean effectivePublic = DocumentPermissionPolicy.resolveUploadVisibility(orgTag, isPublic);
+        boolean effectiveGraphEnabled = graphEnabled != null
+                ? graphEnabled
+                : !DocumentPermissionPolicy.isPrivateOrgTag(orgTag);
         // 获取文件类型信息
         String fileType = getFileType(fileName);
         String contentType = file.getContentType();
@@ -91,6 +100,10 @@ public class UploadService {
                 fileUpload.setUserId(userId); // 设置上传用户ID
                 fileUpload.setOrgTag(orgTag); // 设置组织标签
                 fileUpload.setPublic(effectivePublic); // 私人空间文档不可公开
+                fileUpload.setGraphEnabled(effectiveGraphEnabled);
+                fileUpload.setGraphStatus(effectiveGraphEnabled
+                        ? com.luky.nexusmind.model.KnowledgeGraphStatus.QUEUED
+                        : com.luky.nexusmind.model.KnowledgeGraphStatus.DISABLED);
                 try {
                     fileUploadRepository.save(fileUpload);
                     logger.info("文件记录创建成功 => fileMd5: {}, fileName: {}, fileType: {}", fileMd5, fileName, fileType);

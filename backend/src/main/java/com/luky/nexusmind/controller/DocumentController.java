@@ -260,6 +260,11 @@ public class DocumentController {
             dto.put("orgTag", file.getOrgTag());
             dto.put("createdAt", file.getCreatedAt());
             dto.put("mergedAt", file.getMergedAt());
+            dto.put("graphEnabled", file.isGraphEnabled());
+            dto.put("graphStatus", file.getGraphStatus() == null
+                    ? com.luky.nexusmind.model.KnowledgeGraphStatus.DISABLED
+                    : file.getGraphStatus());
+            dto.put("graphError", file.getGraphError());
 
             FileProcessingStatus processingStatus = processingStatusMap.get(file.getFileMd5());
             if (processingStatus != null) {

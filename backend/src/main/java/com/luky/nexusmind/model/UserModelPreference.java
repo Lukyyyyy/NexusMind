@@ -24,6 +24,10 @@ public class UserModelPreference {
     @Column(name = "embedding_config_id")
     private Long embeddingConfigId;
 
+    /** Null means that graph extraction follows the selected chat model. */
+    @Column(name = "graph_extraction_config_id")
+    private Long graphExtractionConfigId;
+
     @CreationTimestamp
     private LocalDateTime createdAt;
 

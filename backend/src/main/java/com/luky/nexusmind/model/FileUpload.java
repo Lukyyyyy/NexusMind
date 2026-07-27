@@ -65,6 +65,18 @@ public class FileUpload {
     @Column(name = "is_public", nullable = false)
     private boolean isPublic = false;
 
+    /** Whether this document should be extracted into the knowledge graph. */
+    @Column(name = "graph_enabled", nullable = false)
+    private boolean graphEnabled = false;
+
+    @Enumerated(EnumType.STRING)
+    // Nullable for safe schema evolution of existing installations; new rows always receive DISABLED/QUEUED.
+    @Column(name = "graph_status", length = 32)
+    private KnowledgeGraphStatus graphStatus = KnowledgeGraphStatus.DISABLED;
+
+    @Column(name = "graph_error", length = 1000)
+    private String graphError;
+
     /**
      * 文件上传的创建时间
      * 自动记录文件上传开始的时间
@@ -79,4 +91,3 @@ public class FileUpload {
     @UpdateTimestamp
     private LocalDateTime mergedAt;
 }
-

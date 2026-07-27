@@ -66,6 +66,7 @@ frontend/
 - MinIO 8.5.12
 - Kafka 3.2.1
 - Redis 7.0.11
+- Neo4j 5.26（知识图谱）
 
 ## 本地启动
 
@@ -120,6 +121,14 @@ cp .env.example .env.local
 - `LANGFUSE_PUBLIC_KEY`
 - `LANGFUSE_SECRET_KEY`
 - `BACKEND_PORT`
+- `KNOWLEDGE_GRAPH_ENABLED`
+- `NEO4J_URI`
+- `NEO4J_USERNAME`
+- `NEO4J_PASSWORD`
+
+知识图谱默认通过环境变量启用。文档解析完成后会异步生成候选关系；上传者在知识库文件的“更多 → 确认图谱关系”中审核发布，发布后的关系会自动参与聊天检索。
+
+图谱采用“一套 Neo4j、多个逻辑空间”的方式存储：公开文档进入 `PUBLIC`，组织文档进入 `ORG:<组织标识>`，私人文档进入 `USER:<用户标识>`。同名同类型实体只在相同空间内合并；问答时按用户当前有权访问的文档，自动组合公共、所属组织和个人图谱。
 
 ## 常用命令
 

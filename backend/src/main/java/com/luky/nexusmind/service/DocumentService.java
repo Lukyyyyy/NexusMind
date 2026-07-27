@@ -72,6 +72,9 @@ public class DocumentService {
     @Autowired
     private FileProcessingStatusService processingStatusService;
 
+    @Autowired
+    private KnowledgeGraphService knowledgeGraphService;
+
     @Value("${file.parsing.chunk-size}")
     private int configuredChunkSize;
 
@@ -93,6 +96,9 @@ public class DocumentService {
             // 获取文件信息以获取文件名
             FileUpload fileUpload = fileUploadRepository.findByFileMd5AndUserId(fileMd5, userId)
                     .orElseThrow(() -> new RuntimeException("文件不存在"));
+
+            // 先清除图谱关系和审核候选，避免留下无法追溯到原文的孤儿事实。
+            knowledgeGraphService.removeDocument(fileUpload);
             
             // 1. 删除Elasticsearch中的数据
             try {

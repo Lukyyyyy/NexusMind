@@ -8,6 +8,7 @@ import com.luky.nexusmind.repository.DocumentVectorRepository;
 import com.luky.nexusmind.service.AiTraceService;
 import com.luky.nexusmind.service.ElasticsearchService;
 import com.luky.nexusmind.service.FileProcessingStatusService;
+import com.luky.nexusmind.service.KnowledgeGraphExtractionService;
 import com.luky.nexusmind.service.ParseService;
 import com.luky.nexusmind.service.VectorizationService;
 import io.minio.MinioClient;
@@ -33,6 +34,7 @@ public class FileProcessingConsumer {
     private final FileProcessingStatusService processingStatusService;
     private final DocumentVectorRepository documentVectorRepository;
     private final ElasticsearchService elasticsearchService;
+    private final KnowledgeGraphExtractionService graphExtractionService;
     @Autowired
     private KafkaConfig kafkaConfig;
 
@@ -40,13 +42,15 @@ public class FileProcessingConsumer {
     public FileProcessingConsumer(ParseService parseService, VectorizationService vectorizationService, AiTraceService aiTraceService,
                                   FileProcessingStatusService processingStatusService,
                                   DocumentVectorRepository documentVectorRepository,
-                                  ElasticsearchService elasticsearchService) {
+                                  ElasticsearchService elasticsearchService,
+                                  KnowledgeGraphExtractionService graphExtractionService) {
         this.parseService = parseService;
         this.vectorizationService = vectorizationService;
         this.aiTraceService = aiTraceService;
         this.processingStatusService = processingStatusService;
         this.documentVectorRepository = documentVectorRepository;
         this.elasticsearchService = elasticsearchService;
+        this.graphExtractionService = graphExtractionService;
     }
 
     @KafkaListener(topics = "#{kafkaConfig.getFileProcessingTopic()}", groupId = "#{kafkaConfig.getFileProcessingGroupId()}")
@@ -120,6 +124,9 @@ public class FileProcessingConsumer {
                 processingStatusService.markParsed(task, parsedChunkCount);
                 log.info("文件解析完成，fileMd5: {}", task.getFileMd5());
             }
+
+            // 图谱抽取使用已生成的切片异步执行，不阻塞现有向量化和入库流程。
+            graphExtractionService.extractAsync(task.getFileMd5(), task.getUserId());
 
             // 向量不保存中间结果。重试向量化或入库前清理可能残留的 ES 文档，
             // 然后对全部切片重新向量化，保证索引内容一致。

@@ -150,6 +150,23 @@ services:
       timeout: 10s
       retries: 3
 
+  neo4j:
+    image: neo4j:5.26-community
+    container_name: neo4j
+    restart: always
+    ports:
+      - "${NEO4J_HTTP_HOST_PORT:-17474}:7474"
+      - "${NEO4J_BOLT_HOST_PORT:-7687}:7687"
+    environment:
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:?NEO4J_PASSWORD is required}
+    volumes:
+      - neo4j-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "cypher-shell -u neo4j -p ${NEO4J_PASSWORD:?NEO4J_PASSWORD is required} 'RETURN 1;' || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
   mineru-api:
     image: mineru:latest
     build:
@@ -200,5 +217,6 @@ volumes:
   minio-data:
   kafka-data:
   es-data:
+  neo4j-data:
   mineru-output:
   mineru-cache:

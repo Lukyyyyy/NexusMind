@@ -32,6 +32,7 @@ function createDefaultModel(): Api.KnowledgeBase.Form {
     isPublic: false,
     parseEngine: 'AUTO',
     chunkSize: defaultTextChunkSize,
+    graphEnabled: true,
     fileList: []
   };
 }
@@ -68,6 +69,8 @@ watch(
   () => model.value.orgTag,
   orgTag => {
     if (typeof orgTag === 'string' && orgTag.startsWith('PRIVATE_')) model.value.isPublic = false;
+    if (typeof orgTag === 'string' && orgTag.startsWith('PRIVATE_')) model.value.graphEnabled = false;
+    else model.value.graphEnabled = true;
   }
 );
 
@@ -119,6 +122,13 @@ function onUpdate(option: unknown) {
             </NRadio>
           </NSpace>
         </NRadioGroup>
+      </NFormItem>
+      <NFormItem>
+        <template #label>
+          <span>知识图谱<span class="invisible">*</span></span>
+        </template>
+        <NSwitch v-model:value="model.graphEnabled" />
+        <NText depth="3" class="ml-10px">抽取关系，确认后参与问答</NText>
       </NFormItem>
       <NFormItem label="切片大小" path="chunkSize">
         <NSpace vertical :size="10">

@@ -6,6 +6,7 @@ import com.luky.nexusmind.entity.SearchResult;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 
@@ -30,6 +31,9 @@ public class ChatHandler {
     private final ObjectMapper objectMapper;
     private final AiTraceService aiTraceService;
     private final ChatSessionService chatSessionService;
+
+    @Autowired(required = false)
+    private KnowledgeGraphRetrievalService graphRetrievalService;
     
     // 用于存储每个会话的完整响应
     private final Map<String, StringBuilder> responseBuilders = new ConcurrentHashMap<>();
@@ -115,6 +119,12 @@ public class ChatHandler {
                     .attribute("nexusmind.search.results.count", searchResults.size());
             try {
                 context = buildContext(searchResults);
+                if (graphRetrievalService != null) {
+                    String graphContext = graphRetrievalService.buildContext(userId, userMessage, searchResults);
+                    if (!graphContext.isBlank()) {
+                        context = context + "\n" + graphContext;
+                    }
+                }
                 contextSpan.attribute("nexusmind.context.length", context.length());
             } catch (RuntimeException e) {
                 contextSpan.error(e);

@@ -81,6 +81,8 @@ backend/src/main/resources/application.yml~
 /.pnpm-store/
 /.playwright-mcp/
 /.worktrees/
+/.venv/
+/.local/
 
 # Output
 /output/

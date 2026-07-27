@@ -134,6 +134,7 @@ declare namespace Api {
       configs: Item[];
       selectedLlmConfigId: number | null;
       selectedEmbeddingConfigId: number | null;
+      selectedGraphExtractionConfigId: number | null;
       admin: boolean;
     }
 
@@ -158,11 +159,13 @@ declare namespace Api {
     interface PreferenceRequest {
       llmConfigId: number | null;
       embeddingConfigId: number | null;
+      graphExtractionConfigId: number | null;
     }
 
     interface Preference {
       llmConfigId: number | null;
       embeddingConfigId: number | null;
+      graphExtractionConfigId: number | null;
     }
   }
 
@@ -283,6 +286,7 @@ declare namespace Api {
       isPublic: boolean;
       parseEngine: 'AUTO' | 'TIKA' | 'MINERU';
       chunkSize: number;
+      graphEnabled: boolean;
       fileList: import('naive-ui').UploadFileInfo[];
     }
 
@@ -302,6 +306,9 @@ declare namespace Api {
       actualParseEngine?: 'AUTO' | 'TIKA' | 'MINERU' | null;
       chunkSize?: number;
       actualChunkSize?: number | null;
+      graphEnabled?: boolean;
+      graphStatus?: 'DISABLED' | 'QUEUED' | 'EXTRACTING' | 'PENDING_REVIEW' | 'PUBLISHED' | 'FAILED';
+      graphError?: string | null;
       processingStage?: 'QUEUED' | 'PARSING' | 'CHUNKING' | 'VECTORIZING' | 'INDEXING' | 'COMPLETED' | 'FAILED';
       processingState?: 'PENDING' | 'RUNNING' | 'SUCCEEDED' | 'FAILED';
       processingMessage?: string | null;
@@ -387,6 +394,43 @@ declare namespace Api {
       size: number;
       totalPages: number;
       chunks: DocumentChunk[];
+    }
+  }
+
+  namespace KnowledgeGraph {
+    type Status = 'DISABLED' | 'QUEUED' | 'EXTRACTING' | 'PENDING_REVIEW' | 'PUBLISHED' | 'FAILED';
+    type CandidateStatus = 'PENDING' | 'PUBLISHED' | 'REJECTED';
+
+    interface Candidate {
+      id: number;
+      subjectName: string;
+      subjectType: string;
+      predicate: string;
+      objectName: string;
+      objectType: string;
+      evidenceChunkId: number;
+      evidenceText: string;
+      confidence: number;
+      selected: boolean;
+      status: CandidateStatus;
+    }
+
+    interface DocumentGraph {
+      fileMd5: string;
+      enabled: boolean;
+      status: Status;
+      error: string | null;
+      candidates: Candidate[];
+      neo4jEnabled: boolean;
+    }
+
+    interface CandidateUpdate {
+      selected?: boolean;
+      subjectName?: string;
+      subjectType?: string;
+      predicate?: string;
+      objectName?: string;
+      objectType?: string;
     }
   }
 

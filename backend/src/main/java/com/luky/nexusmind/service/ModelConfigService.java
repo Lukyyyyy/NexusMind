@@ -89,6 +89,7 @@ public class ModelConfigService {
                 configs.stream().map(this::toResponse).toList(),
                 effectiveSelectedConfigId(user, preference, AiModelType.LLM),
                 effectiveSelectedConfigId(user, preference, AiModelType.EMBEDDING),
+                effectiveGraphPreferenceId(user, preference),
                 user.getRole() == User.Role.ADMIN);
     }
 
@@ -133,6 +134,9 @@ public class ModelConfigService {
         }
         Long llmConfigId = validateSelectableConfig(user, request.llmConfigId(), AiModelType.LLM);
         Long embeddingConfigId = validateSelectableConfig(user, request.embeddingConfigId(), AiModelType.EMBEDDING);
+        Long graphExtractionConfigId = request.graphExtractionConfigId() == null
+                ? null
+                : validateSelectableConfig(user, request.graphExtractionConfigId(), AiModelType.LLM);
         UserModelPreference preference = preferenceRepository.findByUserId(user.getId()).orElseGet(() -> {
             UserModelPreference created = new UserModelPreference();
             created.setUserId(user.getId());
@@ -140,8 +144,10 @@ public class ModelConfigService {
         });
         preference.setLlmConfigId(llmConfigId);
         preference.setEmbeddingConfigId(embeddingConfigId);
+        preference.setGraphExtractionConfigId(graphExtractionConfigId);
         UserModelPreference saved = preferenceRepository.save(preference);
-        return new PreferenceResponse(saved.getLlmConfigId(), saved.getEmbeddingConfigId());
+        return new PreferenceResponse(saved.getLlmConfigId(), saved.getEmbeddingConfigId(),
+                saved.getGraphExtractionConfigId());
     }
 
     @Transactional(readOnly = true)
@@ -152,6 +158,41 @@ public class ModelConfigService {
     @Transactional(readOnly = true)
     public ResolvedModelConfig resolveEmbeddingConfig(String username) {
         return resolveConfig(username, AiModelType.EMBEDDING).orElseGet(this::legacyEmbeddingConfig);
+    }
+
+    /** Graph extraction follows the chat model unless an explicit LLM is selected. */
+    @Transactional(readOnly = true)
+    public ResolvedModelConfig resolveGraphExtractionConfig(String username) {
+        if (!hasText(username)) {
+            return resolveLlmConfig(username);
+        }
+        User user = userRepository.findByUsername(username).orElse(null);
+        if (user == null) {
+            return resolveLlmConfig(username);
+        }
+        UserModelPreference preference = preferenceRepository.findByUserId(user.getId()).orElse(null);
+        if (preference != null && preference.getGraphExtractionConfigId() != null) {
+            Optional<AiModelConfig> selected = configRepository.findById(preference.getGraphExtractionConfigId())
+                    .filter(config -> config.getModelType() == AiModelType.LLM)
+                    .filter(AiModelConfig::isEnabled)
+                    .filter(config -> canView(user, config));
+            if (selected.isPresent()) {
+                return toResolved(selected.get());
+            }
+        }
+        return resolveLlmConfig(username);
+    }
+
+    private Long effectiveGraphPreferenceId(User user, UserModelPreference preference) {
+        if (preference == null || preference.getGraphExtractionConfigId() == null) {
+            return null;
+        }
+        return configRepository.findById(preference.getGraphExtractionConfigId())
+                .filter(config -> config.getModelType() == AiModelType.LLM)
+                .filter(AiModelConfig::isEnabled)
+                .filter(config -> canView(user, config))
+                .map(AiModelConfig::getId)
+                .orElse(null);
     }
 
     private Optional<ResolvedModelConfig> resolveConfig(String username, AiModelType modelType) {
@@ -439,13 +480,14 @@ public class ModelConfigService {
             List<ModelConfigResponse> configs,
             Long selectedLlmConfigId,
             Long selectedEmbeddingConfigId,
+            Long selectedGraphExtractionConfigId,
             boolean admin) {
     }
 
-    public record PreferenceRequest(Long llmConfigId, Long embeddingConfigId) {
+    public record PreferenceRequest(Long llmConfigId, Long embeddingConfigId, Long graphExtractionConfigId) {
     }
 
-    public record PreferenceResponse(Long llmConfigId, Long embeddingConfigId) {
+    public record PreferenceResponse(Long llmConfigId, Long embeddingConfigId, Long graphExtractionConfigId) {
     }
 
     public record ResolvedModelConfig(

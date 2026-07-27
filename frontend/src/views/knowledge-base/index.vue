@@ -12,6 +12,7 @@ import { getServiceBaseURL } from '@/utils/service';
 import UploadDialog from './modules/upload-dialog.vue';
 import SearchDialog from './modules/search-dialog.vue';
 import ChunkDialog from './modules/chunk-dialog.vue';
+import GraphReviewDialog from './modules/graph-review-dialog.vue';
 
 const appStore = useAppStore();
 const authStore = useAuthStore();
@@ -23,6 +24,9 @@ const chunkVisible = ref(false);
 const chunkFileMd5 = ref('');
 const chunkFileName = ref('');
 const chunkActualParseEngine = ref<Api.KnowledgeBase.UploadTask['actualParseEngine']>(null);
+const graphVisible = ref(false);
+const graphFileMd5 = ref('');
+const graphFileName = ref('');
 type SortableColumnKey = 'processingDurationMillis' | 'createdAt';
 type ActiveSortState = {
   columnKey: SortableColumnKey;
@@ -82,6 +86,12 @@ function handleChunkView(row: Api.KnowledgeBase.UploadTask) {
   chunkVisible.value = true;
 }
 
+function handleGraphView(row: Api.KnowledgeBase.UploadTask) {
+  graphFileMd5.value = row.fileMd5;
+  graphFileName.value = row.fileName;
+  graphVisible.value = true;
+}
+
 function getFileActionOptions(row: Api.KnowledgeBase.UploadTask): DropdownOption[] {
   return [
     ...(row.processingState === 'FAILED'
@@ -96,6 +106,11 @@ function getFileActionOptions(row: Api.KnowledgeBase.UploadTask): DropdownOption
     {
       label: '查看切片',
       key: 'chunks',
+      disabled: row.status !== UploadStatus.Completed
+    },
+    {
+      label: graphActionLabel(row),
+      key: 'graph',
       disabled: row.status !== UploadStatus.Completed
     },
     {
@@ -116,7 +131,25 @@ function handleFileAction(key: string, row: Api.KnowledgeBase.UploadTask) {
     return;
   }
 
+
+  if (key === 'graph') {
+    handleGraphView(row);
+    return;
+  }
+
   if (key === 'delete') confirmDelete(row);
+}
+
+function graphActionLabel(row: Api.KnowledgeBase.UploadTask) {
+  const labels: Record<string, string> = {
+    DISABLED: '启用知识图谱',
+    QUEUED: '查看图谱任务',
+    EXTRACTING: '查看抽取进度',
+    PENDING_REVIEW: '确认图谱关系',
+    PUBLISHED: '查看知识图谱',
+    FAILED: '处理图谱失败'
+  };
+  return row.graphStatus ? labels[row.graphStatus] || '知识图谱' : '知识图谱';
 }
 
 function confirmDelete(row: Api.KnowledgeBase.UploadTask) {
@@ -551,14 +584,25 @@ function renderPipelineStatus(row: Api.KnowledgeBase.UploadTask) {
     return renderStatusProgress('上传中', normalizePercentage(row.progress));
   }
 
-  return renderStatusProgress(processingStageActionText(row.processingStage), processingStageProgress(row.processingStage));
+  return renderStatusProgress(
+    processingStageActionText(row.processingStage),
+    processingStageProgress(row.processingStage),
+    false
+  );
 }
 
-function renderStatusProgress(label: string, percentage: number) {
+function renderStatusProgress(label: string, percentage: number, showPercentage = true) {
   return (
     <div class="max-w-180px">
       <div class="mb-4px text-12px text-#5f6673">{label}</div>
-      <NProgress type="line" percentage={percentage} processing height={8} indicatorPlacement="inside" />
+      <NProgress
+        type="line"
+        percentage={percentage}
+        processing
+        height={8}
+        indicatorPlacement={showPercentage ? 'inside' : 'outside'}
+        showIndicator={showPercentage}
+      />
     </div>
   );
 }
@@ -926,6 +970,12 @@ async function onBeforeUpload(
       :file-md5="chunkFileMd5"
       :file-name="chunkFileName"
       :actual-parse-engine="chunkActualParseEngine"
+    />
+    <GraphReviewDialog
+      v-model:visible="graphVisible"
+      :file-md5="graphFileMd5"
+      :file-name="graphFileName"
+      @update:visible="value => !value && getList()"
     />
     
     <!-- 文件预览弹窗 -->

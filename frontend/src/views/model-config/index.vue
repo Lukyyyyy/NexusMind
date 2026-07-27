@@ -18,6 +18,7 @@ const formRef = ref<FormInst | null>(null);
 const overview = ref<Api.ModelConfig.Overview | null>(null);
 const selectedLlmConfigId = ref<number | null>(null);
 const selectedEmbeddingConfigId = ref<number | null>(null);
+const selectedGraphExtractionConfigId = ref<number | null>(null);
 
 const emptyForm = (): Api.ModelConfig.Request => ({
   ownerType: 'USER',
@@ -163,6 +164,7 @@ async function loadData() {
     overview.value = data;
     selectedLlmConfigId.value = data.selectedLlmConfigId;
     selectedEmbeddingConfigId.value = data.selectedEmbeddingConfigId;
+    selectedGraphExtractionConfigId.value = data.selectedGraphExtractionConfigId;
   }
   loading.value = false;
 }
@@ -175,7 +177,8 @@ async function savePreference() {
   saving.value = true;
   const { error } = await updateModelPreference({
     llmConfigId: selectedLlmConfigId.value,
-    embeddingConfigId: selectedEmbeddingConfigId.value
+    embeddingConfigId: selectedEmbeddingConfigId.value,
+    graphExtractionConfigId: selectedGraphExtractionConfigId.value
   });
   if (!error) {
     window.$message?.success('当前模型已更新');
@@ -274,10 +277,19 @@ onMounted(loadData);
 <template>
   <div class="min-h-500px flex-col-stretch gap-16px overflow-hidden lt-sm:overflow-auto">
     <NCard title="当前使用" :bordered="false" size="small" class="card-wrapper">
-      <div class="grid grid-cols-1 gap-16px lg:grid-cols-[1fr_1fr_auto] lg:items-end">
+      <div class="grid grid-cols-1 gap-16px lg:grid-cols-[1fr_1fr_1fr_auto] lg:items-end">
         <div>
           <div class="mb-6px text-14px font-medium lh-22px">LLM</div>
           <NSelect v-model:value="selectedLlmConfigId" :options="selectableLlmOptions" placeholder="请选择 LLM" />
+        </div>
+        <div>
+          <div class="mb-6px text-14px font-medium lh-22px">图谱抽取模型</div>
+          <NSelect
+            v-model:value="selectedGraphExtractionConfigId"
+            :options="selectableLlmOptions"
+            clearable
+            placeholder="跟随问答模型"
+          />
         </div>
         <div>
           <div class="mb-6px text-14px font-medium lh-22px">向量化模型</div>
