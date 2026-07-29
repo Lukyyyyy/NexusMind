@@ -976,6 +976,7 @@ async function onBeforeUpload(
       :file-md5="graphFileMd5"
       :file-name="graphFileName"
       @update:visible="value => !value && getList()"
+      @status-change="() => getList()"
     />
     
     <!-- 文件预览弹窗 -->

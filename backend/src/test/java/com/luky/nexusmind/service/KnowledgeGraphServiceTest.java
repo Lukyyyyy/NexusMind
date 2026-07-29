@@ -42,6 +42,9 @@ class KnowledgeGraphServiceTest {
         assertEquals(GraphCandidateStatus.PUBLISHED, selected.getStatus());
         assertEquals(GraphCandidateStatus.REJECTED, rejected.getStatus());
         assertEquals(KnowledgeGraphStatus.PUBLISHED, response.status());
+        assertEquals(2, response.nodes().size());
+        assertEquals(1, response.edges().size());
+        assertEquals("依赖", response.edges().get(0).predicate());
     }
 
     @Test

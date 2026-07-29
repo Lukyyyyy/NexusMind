@@ -10,7 +10,9 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 @Service
 public class KnowledgeGraphService {
@@ -126,8 +128,35 @@ public class KnowledgeGraphService {
                 .map(this::candidate).toList();
         KnowledgeGraphStatus status = file.getGraphStatus() == null
                 ? KnowledgeGraphStatus.DISABLED : file.getGraphStatus();
+        GraphVisualization visualization = visualization(candidates);
         return new DocumentGraphResponse(file.getFileMd5(), file.isGraphEnabled(), status,
-                file.getGraphError(), candidates, storeService.isEnabled());
+                file.getGraphError(), candidates, visualization.nodes(), visualization.edges(), storeService.isEnabled());
+    }
+
+    private GraphVisualization visualization(List<CandidateResponse> candidates) {
+        Map<String, MutableGraphNode> nodes = new LinkedHashMap<>();
+        List<GraphEdgeResponse> edges = candidates.stream()
+                .filter(value -> value.status() == GraphCandidateStatus.PUBLISHED
+                        || value.status() == GraphCandidateStatus.PENDING && value.selected())
+                .map(value -> {
+                    String source = nodeId(value.subjectType(), value.subjectName());
+                    String target = nodeId(value.objectType(), value.objectName());
+                    nodes.computeIfAbsent(source,
+                            ignored -> new MutableGraphNode(source, value.subjectName(), value.subjectType()))
+                            .incrementDegree();
+                    nodes.computeIfAbsent(target,
+                            ignored -> new MutableGraphNode(target, value.objectName(), value.objectType()))
+                            .incrementDegree();
+                    return new GraphEdgeResponse("candidate-" + value.id(), source, target, value.predicate(),
+                            value.confidence() == null ? 0.0 : value.confidence(), value.evidenceChunkId(),
+                            value.evidenceText(), value.status());
+                })
+                .toList();
+        return new GraphVisualization(nodes.values().stream().map(MutableGraphNode::response).toList(), edges);
+    }
+
+    private String nodeId(String type, String name) {
+        return KnowledgeGraphStoreService.normalizeType(type) + "|" + KnowledgeGraphStoreService.normalizeName(name);
     }
 
     private CandidateResponse candidate(GraphCandidate value) {
@@ -153,12 +182,41 @@ public class KnowledgeGraphService {
     }
 
     public record DocumentGraphResponse(String fileMd5, boolean enabled, KnowledgeGraphStatus status,
-                                        String error, List<CandidateResponse> candidates, boolean neo4jEnabled) {}
+                                        String error, List<CandidateResponse> candidates,
+                                        List<GraphNodeResponse> nodes, List<GraphEdgeResponse> edges,
+                                        boolean neo4jEnabled) {}
     public record CandidateResponse(Long id, String subjectName, String subjectType, String predicate,
                                     String objectName, String objectType, Integer evidenceChunkId,
                                     String evidenceText, Double confidence, boolean selected,
                                     GraphCandidateStatus status) {}
+    public record GraphNodeResponse(String id, String name, String type, int degree) {}
+    public record GraphEdgeResponse(String id, String source, String target, String predicate,
+                                    Double confidence, Integer evidenceChunkId, String evidenceText,
+                                    GraphCandidateStatus status) {}
     public record CandidateUpdate(Boolean selected, String subjectName, String subjectType,
                                   String predicate, String objectName, String objectType) {}
     public record EnabledRequest(boolean enabled) {}
+
+    private record GraphVisualization(List<GraphNodeResponse> nodes, List<GraphEdgeResponse> edges) {}
+
+    private static final class MutableGraphNode {
+        private final String id;
+        private final String name;
+        private final String type;
+        private int degree;
+
+        private MutableGraphNode(String id, String name, String type) {
+            this.id = id;
+            this.name = name;
+            this.type = type;
+        }
+
+        private void incrementDegree() {
+            degree++;
+        }
+
+        private GraphNodeResponse response() {
+            return new GraphNodeResponse(id, name, type, degree);
+        }
+    }
 }

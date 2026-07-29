@@ -421,7 +421,27 @@ declare namespace Api {
       status: Status;
       error: string | null;
       candidates: Candidate[];
+      nodes: GraphNode[];
+      edges: GraphEdge[];
       neo4jEnabled: boolean;
+    }
+
+    interface GraphNode {
+      id: string;
+      name: string;
+      type: string;
+      degree: number;
+    }
+
+    interface GraphEdge {
+      id: string;
+      source: string;
+      target: string;
+      predicate: string;
+      confidence: number;
+      evidenceChunkId: number;
+      evidenceText: string;
+      status: CandidateStatus;
     }
 
     interface CandidateUpdate {

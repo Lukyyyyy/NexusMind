@@ -62,21 +62,43 @@ public class KnowledgeGraphExtractionService {
             if (chunks.isEmpty()) throw new IllegalStateException("文档尚未完成解析");
             String username = resolveUsername(file.getUserId());
             int saved = 0;
-            for (List<DocumentVector> batch : batches(chunks)) {
-                String input = buildInput(batch);
-                KnowledgeGraphExtractionClient.ExtractionResult result = extractionClient.extract(username, input);
-                Map<Integer, String> evidenceByChunk = new HashMap<>();
-                batch.forEach(chunk -> evidenceByChunk.put(chunk.getChunkId(), chunk.getTextContent()));
-                for (KnowledgeGraphExtractionClient.ExtractedRelation relation : result.relations()) {
-                    GraphCandidate candidate = toCandidate(file, relation, evidenceByChunk, result.modelName());
-                    if (candidate != null) {
-                        candidateRepository.save(candidate);
-                        saved++;
+            int failedBatches = 0;
+            Exception lastBatchError = null;
+            List<List<DocumentVector>> chunkBatches = batches(chunks);
+            for (int batchIndex = 0; batchIndex < chunkBatches.size(); batchIndex++) {
+                List<DocumentVector> batch = chunkBatches.get(batchIndex);
+                try {
+                    String input = buildInput(batch);
+                    KnowledgeGraphExtractionClient.ExtractionResult result = extractionClient.extract(username, input);
+                    Map<Integer, String> evidenceByChunk = new HashMap<>();
+                    batch.forEach(chunk -> evidenceByChunk.put(chunk.getChunkId(), chunk.getTextContent()));
+                    for (KnowledgeGraphExtractionClient.ExtractedRelation relation : result.relations()) {
+                        GraphCandidate candidate = toCandidate(file, relation, evidenceByChunk, result.modelName());
+                        if (candidate != null) {
+                            candidateRepository.save(candidate);
+                            saved++;
+                        }
                     }
+                } catch (Exception batchError) {
+                    failedBatches++;
+                    lastBatchError = batchError;
+                    logger.warn("知识图谱第 {}/{} 批抽取失败，fileMd5={}",
+                            batchIndex + 1, chunkBatches.size(), fileMd5, batchError);
                 }
             }
+
+            if (saved == 0 && lastBatchError != null) {
+                throw new IllegalStateException(lastBatchError.getMessage(), lastBatchError);
+            }
             file.setGraphStatus(KnowledgeGraphStatus.PENDING_REVIEW);
-            file.setGraphError(saved == 0 ? "未从文档中识别到可靠关系" : null);
+            if (failedBatches > 0) {
+                String reason = hasText(lastBatchError.getMessage())
+                        ? abbreviate(lastBatchError.getMessage(), 300) : "未知错误";
+                file.setGraphError(String.format("已抽取 %d 条关系，但有 %d/%d 批抽取未完成：%s。请审核已有结果或重新抽取",
+                        saved, failedBatches, chunkBatches.size(), reason));
+            } else {
+                file.setGraphError(saved == 0 ? "未从文档中识别到可靠关系" : null);
+            }
             fileUploadRepository.save(file);
         } catch (Exception e) {
             file.setGraphStatus(KnowledgeGraphStatus.FAILED);

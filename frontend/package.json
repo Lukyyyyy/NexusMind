@@ -44,6 +44,7 @@
     "update-pkg": "sa update-pkg"
   },
   "dependencies": {
+    "@antv/g6": "^5.1.1",
     "@better-scroll/core": "2.5.1",
     "@iconify/vue": "5.0.0",
     "@sa/axios": "workspace:*",

@@ -100,6 +100,7 @@ start_infra() {
   brew services start redis
   brew services start kafka
   brew services start minio
+  brew services start neo4j
 
   brew services start elastic/tap/elasticsearch-full
   ensure_elasticsearch_service_config
@@ -115,6 +116,7 @@ start_infra() {
   wait_for_port "Redis" "${REDIS_PORT:-6379}" 60
   wait_for_port "Kafka" "${KAFKA_PORT:-9092}" 90
   wait_for_port "MinIO" "${MINIO_API_PORT:-9000}" 60
+  wait_for_port "Neo4j" "${NEO4J_BOLT_HOST_PORT:-7687}" 90
   wait_for_command "Elasticsearch" 120 curl -fsS "http://localhost:${ELASTICSEARCH_PORT:-9200}"
 
   if redis-cli ping >/dev/null 2>&1; then
@@ -139,6 +141,7 @@ stop_infra() {
   brew services stop elastic/tap/elasticsearch-full || true
   brew services stop kafka || true
   brew services stop minio || true
+  brew services stop neo4j || true
   brew services stop mysql || true
   brew services stop redis || true
 }
@@ -229,6 +232,7 @@ else
   check_port "Kafka" "${KAFKA_PORT:-9092}"
   check_port "Elasticsearch" "${ELASTICSEARCH_PORT:-9200}"
   check_port "MinIO" "${MINIO_API_PORT:-9000}"
+  check_port "Neo4j" "${NEO4J_BOLT_HOST_PORT:-7687}"
 fi
 
 set -m
