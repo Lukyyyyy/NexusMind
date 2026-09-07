@@ -149,8 +149,13 @@ function getFlatRequest(options: Partial<RequestOption<App.Service.Response>> = 
         }
 
         let message = error.response?.data?.message || '请求失败，请稍后重试';
+        if (error.response?.status === 503) {
+          message = '服务繁忙，请稍后重试';
+        }
         if (error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT') {
-          message = '请求超时，操作可能仍在处理中，请刷新状态后再重试';
+          message = error.config?.url?.includes('/users/login')
+            ? '服务繁忙，请稍后重试'
+            : '请求超时，操作可能仍在处理中，请刷新状态后再重试';
         }
         let backendErrorCode = '';
 

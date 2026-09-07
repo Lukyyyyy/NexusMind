@@ -10,6 +10,8 @@ import com.luky.nexusmind.utils.LogUtils;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.dao.DataAccessResourceFailureException;
+import org.springframework.transaction.CannotCreateTransactionException;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.Arrays;
@@ -106,8 +108,21 @@ public class UserController {
         } catch (Exception e) {
             LogUtils.logBusinessError("USER_LOGIN", "anonymous", "登录异常: %s", e, e.getMessage());
             monitor.end("登录异常: " + e.getMessage());
+            if (isDatabaseUnavailable(e)) {
+                return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                        .body(Map.of("code", 503, "message", "服务繁忙，请稍后重试"));
+            }
             return ResponseEntity.status(500).body(Map.of("code", 500, "message", "服务器内部错误"));
         }
+    }
+
+    private boolean isDatabaseUnavailable(Throwable error) {
+        for (Throwable cause = error; cause != null; cause = cause.getCause()) {
+            if (cause instanceof CannotCreateTransactionException
+                    || cause instanceof DataAccessResourceFailureException
+                    || cause instanceof java.sql.SQLTransientConnectionException) return true;
+        }
+        return false;
     }
 
     // 获取当前用户信息

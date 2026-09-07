@@ -53,6 +53,7 @@ public class NotificationService {
         return saved;
     }
 
+    @Transactional(readOnly = true)
     public Map<String, Object> list(String username, int page, int size) {
         User user = requireUser(username);
         Page<SystemNotification> values = repository.findByRecipientIdOrderByCreatedAtDesc(

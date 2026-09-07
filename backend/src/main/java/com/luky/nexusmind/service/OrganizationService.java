@@ -44,6 +44,7 @@ public class OrganizationService {
         this.jwtUtils = jwtUtils;
     }
 
+    @Transactional(readOnly = true)
     public Map<String, Object> overview(String username, String keyword, int page, int size) {
         User user = requireUser(username);
         Set<String> effective = membershipService.effectiveTagIds(user);
@@ -74,6 +75,7 @@ public class OrganizationService {
                 "primaryOrg", user.getPrimaryOrg());
     }
 
+    @Transactional(readOnly = true)
     public Map<String, Object> myRequests(String username, int page, int size) {
         User user = requireUser(username);
         Page<OrganizationJoinRequest> values = requestRepository.findByUserIdOrderByCreatedAtDesc(
@@ -127,6 +129,7 @@ public class OrganizationService {
         auditService.record(user, "ORG_EXITED", user.getId(), tagId, null, ip);
     }
 
+    @Transactional(readOnly = true)
     public Map<String, Object> adminRequests(String status, int page, int size) {
         Page<OrganizationJoinRequest> values = status == null || status.isBlank() || "ALL".equalsIgnoreCase(status)
                 ? requestRepository.findAllByOrderByCreatedAtDesc(PageRequest.of(Math.max(page - 1, 0), size))

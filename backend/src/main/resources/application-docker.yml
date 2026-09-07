@@ -22,6 +22,7 @@ spring:
       pool-name: NexusMindHikariCP
       maximum-pool-size: ${MYSQL_POOL_MAX_SIZE:6}
       minimum-idle: ${MYSQL_POOL_MIN_IDLE:1}
+      connection-timeout: ${MYSQL_POOL_CONNECTION_TIMEOUT:5000}
   jpa:
     hibernate:
       ddl-auto: update
