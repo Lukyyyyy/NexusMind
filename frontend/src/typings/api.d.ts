@@ -76,6 +76,7 @@ declare namespace Api {
       joinable?: boolean;
       archivedAt?: string | null;
       archiveReason?: string | null;
+      createdAt?: string | null;
       children?: Item[];
     }
 

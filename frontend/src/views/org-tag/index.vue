@@ -10,6 +10,8 @@ import SmtpSettings from './modules/smtp-settings.vue';
 const authStore = useAuthStore();
 const route = useRoute();
 const activeTab = ref(String(route.query.tab || 'organizations'));
+const organizationKeyword = ref('');
+const expandedRowKeys = ref<string[]>([]);
 
 const { columns, columnChecks, data, loading, getData } = useTable({
   apiFn: fetchGetOrgTagList,
@@ -64,6 +66,20 @@ const { columns, columnChecks, data, loading, getData } = useTable({
   ]
 });
 
+const displayedData = computed(() => {
+  const keyword = organizationKeyword.value.trim().toLocaleLowerCase();
+  if (!keyword) return data.value;
+
+  const filter = (items: Api.OrgTag.Item[]): Api.OrgTag.Item[] => items.flatMap(item => {
+    const children = filter(item.children || []);
+    const matched = item.tagId.toLocaleLowerCase().includes(keyword) || item.name.toLocaleLowerCase().includes(keyword);
+    return matched || children.length
+      ? [{ ...item, ...(children.length ? { children } : { children: undefined }) }]
+      : [];
+  });
+  return filter(data.value);
+});
+
 const {
   dialogVisible,
   operateType,
@@ -82,6 +98,20 @@ function addChild(row: Api.OrgTag.Item) {
 /** the editing row data */
 function edit(row: Api.OrgTag.Item) {
   handleEdit(row);
+}
+
+function getRowProps(row: Api.OrgTag.Item) {
+  if (!row.children?.length) return {};
+
+  return {
+    class: 'organization-row--expandable',
+    onClick(event: MouseEvent) {
+      if ((event.target as HTMLElement).closest('.n-data-table-expand-trigger, .row-actions')) return;
+      expandedRowKeys.value = expandedRowKeys.value.includes(row.tagId)
+        ? expandedRowKeys.value.filter(key => key !== row.tagId)
+        : [...expandedRowKeys.value, row.tagId];
+    }
+  };
 }
 
 async function handleDelete(tagId: string) {
@@ -159,12 +189,22 @@ async function toggleJoinable(row: Api.OrgTag.Item) {
               <strong>组织结构</strong>
               <p>维护组织层级、开放状态和生命周期</p>
             </div>
-            <TableHeaderOperation v-model:columns="columnChecks" :loading="loading" @add="handleAdd" @refresh="getData" />
+            <div class="table-toolbar__actions">
+              <NInput
+                v-model:value="organizationKeyword"
+                clearable
+                placeholder="按标签ID或标签名称搜索"
+                class="organization-search"
+              />
+              <TableHeaderOperation v-model:columns="columnChecks" :loading="loading" @add="handleAdd" @refresh="getData" />
+            </div>
           </div>
           <NDataTable
+            v-model:expanded-row-keys="expandedRowKeys"
             remote
             :columns="columns"
-            :data="data"
+            :data="displayedData"
+            :row-props="getRowProps"
             size="small"
             :scroll-x="962"
             :loading="loading"
@@ -200,8 +240,13 @@ async function toggleJoinable(row: Api.OrgTag.Item) {
 .table-toolbar { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; margin-bottom: 16px; }
 .table-toolbar strong { color: var(--nexus-text); font-size: 14px; font-weight: 600; }
 .table-toolbar p { margin: 4px 0 0; color: var(--nexus-text-secondary); font-size: 12px; }
+.table-toolbar__actions { display: flex; align-items: center; gap: 12px; }
+.organization-search { width: 240px; }
 .organization-table { overflow: hidden; border: 1px solid var(--nexus-border); border-radius: 5px; }
-.management-shell :deep(.organization-name) { display: flex; min-width: 0; align-items: center; gap: 10px; padding: 4px 0; }
+.organization-table :deep(.n-data-table-expand-trigger) { vertical-align: middle; }
+.organization-table :deep(.n-ellipsis:has(.organization-name)) { vertical-align: middle; }
+.organization-table :deep(.organization-row--expandable) { cursor: pointer; }
+.management-shell :deep(.organization-name) { display: inline-flex; min-width: 0; align-items: center; gap: 10px; padding: 4px 0; vertical-align: middle; }
 .management-shell :deep(.organization-name__icon) { display: grid; width: 32px; height: 32px; flex: 0 0 auto; place-items: center; border-radius: 5px; background: var(--nexus-primary-soft); color: var(--nexus-primary); font-size: 16px; }
 .management-shell :deep(.organization-name strong), .management-shell :deep(.organization-name small) { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .management-shell :deep(.organization-name strong) { color: var(--nexus-text); font-size: 14px; font-weight: 600; }
@@ -212,5 +257,7 @@ async function toggleJoinable(row: Api.OrgTag.Item) {
   .page-tabs :deep(.n-tabs-nav) { padding: 0 14px; }
   .page-tabs :deep(.n-tab-pane) { padding: 14px; }
   .table-toolbar { align-items: flex-start; flex-direction: column; }
+  .table-toolbar__actions { width: 100%; align-items: stretch; flex-direction: column; }
+  .organization-search { width: 100%; }
 }
 </style>

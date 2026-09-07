@@ -694,6 +694,7 @@ public class UserService {
         // 获取所有根节点（parentTag为null的标签）
         List<OrganizationTag> rootTags = organizationTagRepository.findByParentTag(null).stream()
                 .filter(tag -> !tag.getTagId().startsWith(PRIVATE_TAG_PREFIX))
+                .sorted(organizationTagOrder())
                 .toList();
         
         // 递归构建标签树
@@ -718,9 +719,12 @@ public class UserService {
             node.put("joinable", tag.isJoinable());
             node.put("archivedAt", tag.getArchivedAt());
             node.put("archiveReason", tag.getArchiveReason());
+            node.put("createdAt", tag.getCreatedAt());
             
             // 获取子标签
-            List<OrganizationTag> children = organizationTagRepository.findByParentTag(tag.getTagId());
+            List<OrganizationTag> children = organizationTagRepository.findByParentTag(tag.getTagId()).stream()
+                    .sorted(organizationTagOrder())
+                    .toList();
             if (!children.isEmpty()) {
                 node.put("children", buildTagTreeRecursive(children));
             }
@@ -730,6 +734,16 @@ public class UserService {
         }
         
         return result;
+    }
+
+    private Comparator<OrganizationTag> organizationTagOrder() {
+        return Comparator.comparingInt((OrganizationTag tag) -> switch (tag.getTagId()) {
+                    case "admin" -> 0;
+                    case DEFAULT_ORG_TAG -> 1;
+                    default -> 2;
+                })
+                .thenComparing(OrganizationTag::getCreatedAt, Comparator.nullsLast(Comparator.naturalOrder()))
+                .thenComparing(OrganizationTag::getTagId);
     }
     
     /**
