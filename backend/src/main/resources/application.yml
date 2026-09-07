@@ -132,6 +132,7 @@ mail:
     organization-result-template-id: ${TENCENT_SES_ORGANIZATION_RESULT_TEMPLATE_ID:0}
     membership-change-template-id: ${TENCENT_SES_MEMBERSHIP_CHANGE_TEMPLATE_ID:0}
     role-change-template-id: ${TENCENT_SES_ROLE_CHANGE_TEMPLATE_ID:0}
+    account-status-changed-template-id: ${TENCENT_SES_ACCOUNT_STATUS_CHANGED_TEMPLATE_ID:0}
     email-changed-template-id: ${TENCENT_SES_EMAIL_CHANGED_TEMPLATE_ID:0}
     test-template-id: ${TENCENT_SES_TEST_TEMPLATE_ID:0}
 
@@ -258,5 +259,4 @@ management:
   metrics:
     tags:
       application: ${spring.application.name}
-
 

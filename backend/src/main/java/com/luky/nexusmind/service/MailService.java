@@ -18,6 +18,7 @@ import org.springframework.mail.javamail.MimeMessageHelper;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.util.HtmlUtils;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -50,6 +51,7 @@ public class MailService {
                        @Value("${mail.tencent-ses.organization-result-template-id:0}") long organizationResultTemplateId,
                        @Value("${mail.tencent-ses.membership-change-template-id:0}") long membershipChangeTemplateId,
                        @Value("${mail.tencent-ses.role-change-template-id:0}") long roleChangeTemplateId,
+                       @Value("${mail.tencent-ses.account-status-changed-template-id:0}") long accountStatusChangedTemplateId,
                        @Value("${mail.tencent-ses.email-changed-template-id:0}") long emailChangedTemplateId,
                        @Value("${mail.tencent-ses.test-template-id:0}") long testTemplateId) {
         this.deliveryRepository = deliveryRepository;
@@ -65,6 +67,7 @@ public class MailService {
                 EmailDelivery.TemplateKind.ORGANIZATION_RESULT, organizationResultTemplateId,
                 EmailDelivery.TemplateKind.MEMBERSHIP_CHANGE, membershipChangeTemplateId,
                 EmailDelivery.TemplateKind.ROLE_CHANGE, roleChangeTemplateId,
+                EmailDelivery.TemplateKind.ACCOUNT_STATUS_CHANGED, accountStatusChangedTemplateId,
                 EmailDelivery.TemplateKind.EMAIL_CHANGED, emailChangedTemplateId,
                 EmailDelivery.TemplateKind.TEST, testTemplateId);
         this.sesClient = secretId.isBlank() || secretKey.isBlank()
@@ -111,6 +114,15 @@ public class MailService {
     public void enqueueRoleChange(User recipient, String action) {
         enqueue(recipient, EmailDelivery.TemplateKind.ROLE_CHANGE, "知枢 NexusMind 账号角色已变更",
                 Map.of("action", action), true);
+    }
+
+    public void enqueueAccountStatusChanged(User recipient, String action, String time, String reason) {
+        String displayName = recipient.getDisplayName() == null || recipient.getDisplayName().isBlank()
+                ? recipient.getUsername() : recipient.getDisplayName();
+        enqueue(recipient, EmailDelivery.TemplateKind.ACCOUNT_STATUS_CHANGED,
+                "知枢 NexusMind 账户状态已变更",
+                Map.of("displayName", HtmlUtils.htmlEscape(displayName),
+                        "action", action, "time", time, "reason", reason), true);
     }
 
     public void enqueueEmailChanged(String recipient) {
@@ -181,14 +193,16 @@ public class MailService {
     }
 
     private void sendTencentSes(EmailDelivery delivery) throws Exception {
-        if (!isConfigured()) throw new IllegalStateException("腾讯云 SES 尚未配置完整");
+        if (sesClient == null || sesFromAddress.isBlank()) throw new IllegalStateException("腾讯云 SES 尚未配置完整");
         SendEmailRequest request = new SendEmailRequest();
         request.setFromEmailAddress(sesFromAddress);
         request.setDestination(new String[]{delivery.getRecipient()});
         request.setSubject(delivery.getSubject());
         Template template = new Template();
-        template.setTemplateID(delivery.getTemplateKind() == EmailDelivery.TemplateKind.VERIFICATION
-                ? verificationTemplateId : sesTemplateIds.get(delivery.getTemplateKind()));
+        Long templateId = delivery.getTemplateKind() == EmailDelivery.TemplateKind.VERIFICATION
+                ? verificationTemplateId : sesTemplateIds.get(delivery.getTemplateKind());
+        if (templateId == null || templateId <= 0) throw new IllegalStateException("邮件模板 ID 未配置");
+        template.setTemplateID(templateId);
         template.setTemplateData(delivery.getBody());
         request.setTemplate(template);
         sesClient.SendEmail(request);
@@ -228,6 +242,10 @@ public class MailService {
             case ORGANIZATION_RESULT -> "<p>你加入「" + data.get("organization") + "」的申请已" + data.get("result") + "。</p><p>处理说明：" + data.get("reason") + "</p>";
             case MEMBERSHIP_CHANGE -> "<p>管理员已调整你的组织成员关系。</p><p>变更原因：" + data.get("reason") + "</p>";
             case ROLE_CHANGE -> "<p>你的账号已" + data.get("action") + "。</p>";
+            case ACCOUNT_STATUS_CHANGED -> "<p>" + data.get("displayName") + "，您好：</p><p>你的账户已"
+                    + data.get("action") + "。</p><p>操作时间："
+                    + data.get("time") + "</p><p>变更原因：" + data.get("reason")
+                    + "</p><p>原登录会话已失效。若账户已重新启用，请重新登录；若账户被禁用，请联系超级管理员。</p>";
             case EMAIL_CHANGED -> "<p>你的登录邮箱已变更。如非本人操作，请立即修改密码并联系管理员。</p>";
             case TEST -> "<p>邮件服务配置成功。</p>";
         };
