@@ -124,11 +124,38 @@ cp .env.example .env.local
 - `DEEPSEEK_API_KEY`、`EMBEDDING_API_KEY`：也可以在系统的模型配置页面中设置。
 - 邮件使用 SMTP 时在管理页面配置；使用腾讯云 SES 时设置 `MAIL_PROVIDER=tencent-ses` 并填写全部 `TENCENT_SES_*` 参数。
 
-启动或更新服务器容器：
+首次启动全部服务器容器：
 
 ```bash
 docker compose --env-file .env.deploy.local -f docker-compose.deploy.yml up -d --build
 ```
+
+代码拉取到服务器后，使用一键脚本选择性重新部署。脚本不会操作 Git 或数据卷；新镜像构建成功后才替换线上容器，健康检查失败时自动恢复本次操作前的镜像。前端本地构建期间会临时暂停 MinerU：
+
+```bash
+./scripts/deploy.sh backend
+./scripts/deploy.sh frontend
+./scripts/deploy.sh all
+```
+
+需要强制重新安装依赖并完整重建镜像时，可在部署命令末尾添加 `--no-cache`：
+
+```bash
+./scripts/deploy.sh frontend --no-cache
+./scripts/deploy.sh all --no-cache
+```
+
+手动恢复最近一个历史版本：
+
+```bash
+./scripts/deploy.sh rollback backend
+./scripts/deploy.sh rollback frontend
+./scripts/deploy.sh rollback all
+```
+
+`all` 将前后端作为同一个部署事务处理，任一服务失败都会恢复本次部署前已经替换的服务。每个服务保留 `local` 当前版本和最近两个 `rollback-*` 历史版本；清理范围仅限 NexusMind 前后端镜像。容器与镜像支持自动恢复，Flyway 已执行的数据库迁移不会由脚本自动撤销。
+重新部署要求服务器已安装 Docker Buildx，并且构建开始前具有足够可用内存。涉及前端本地构建时，脚本会临时停止 MinerU 以释放内存，并在构建成功、失败或被中断后重新启动；暂停期间文档解析服务暂不可用。脚本会拒绝与其他 Docker 构建任务同时运行，不会清理系统缓存、重置 Swap 或执行全局 Docker 清理。
+
 
 Redis 是否需要密码应使用 `sudo docker exec redis redis-cli ping` 检查：返回 `PONG` 表示当前默认连接无需认证，`NOAUTH` 表示需要密码。宿主机 `6379` 未监听并不意味着容器故障，不需要为此向公网映射 Redis 端口。
 

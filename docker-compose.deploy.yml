@@ -218,6 +218,12 @@ services:
         condition: service_healthy
     ports:
       - "127.0.0.1:9527:80"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
     mem_limit: 64m
     memswap_limit: 96m
     cpus: "0.25"
