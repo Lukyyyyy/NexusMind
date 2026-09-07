@@ -3,7 +3,7 @@ import type { DataTableSortState, DropdownOption } from 'naive-ui';
 import type { UploadFileInfo } from 'naive-ui';
 import { NButton, NDropdown, NEllipsis, NModal, NProgress, NTag, NTooltip, NUpload } from 'naive-ui';
 import { uploadAccept } from '@/constants/common';
-import { fakePaginationRequest } from '@/service/request';
+import { fakePaginationRequest, request } from '@/service/request';
 import { UploadStatus } from '@/enum';
 import SvgIcon from '@/components/custom/svg-icon.vue';
 import FilePreview from '@/components/custom/file-preview.vue';
@@ -356,7 +356,13 @@ const isHttpProxy = import.meta.env.DEV && import.meta.env.VITE_HTTP_PROXY === '
 const { baseURL } = getServiceBaseURL(import.meta.env, isHttpProxy);
 let durationRefreshTimer: ReturnType<typeof setInterval> | null = null;
 let statusEventSource: EventSource | null = null;
+let statusEventsEnabled = false;
+let statusEventsStarting = false;
+let statusReconnectTimer: ReturnType<typeof setTimeout> | null = null;
+let statusRefreshPromise: Promise<void> | null = null;
+let lastErrorRefreshAt = 0;
 onMounted(async () => {
+  statusEventsEnabled = true;
   await loadOrgTagOptions();
   await getList();
   startProcessingStatusEvents();
@@ -366,10 +372,18 @@ onMounted(async () => {
 });
 
 onUnmounted(() => {
+  statusEventsEnabled = false;
   if (durationRefreshTimer) clearInterval(durationRefreshTimer);
-  statusEventSource?.close();
-  statusEventSource = null;
+  stopProcessingStatusEvents();
 });
+
+watch(
+  () => authStore.token,
+  token => {
+    if (token) startProcessingStatusEvents();
+    else stopProcessingStatusEvents();
+  }
+);
 
 watch(sortState, () => {
   reloadColumns();
@@ -727,11 +741,14 @@ function processingStageText(stage: Api.KnowledgeBase.UploadTask['processingStag
   return stage ? record[stage] || stage : '未开始';
 }
 
-function startProcessingStatusEvents() {
-  const token = getToken();
-  if (!token || statusEventSource) return;
+async function startProcessingStatusEvents() {
+  if (!statusEventsEnabled || !getToken() || statusEventSource || statusEventsStarting) return;
+  statusEventsStarting = true;
+  const { error, data } = await request<{ ticket: string }>({ method: 'post', url: '/upload/status/ticket' });
+  statusEventsStarting = false;
+  if (error || !data?.ticket || !statusEventsEnabled || !getToken()) return;
 
-  const query = new URLSearchParams({ token });
+  const query = new URLSearchParams({ ticket: data.ticket });
   statusEventSource = new EventSource(`${baseURL}/upload/status/events?${query.toString()}`);
 
   statusEventSource.addEventListener('connected', () => {
@@ -742,17 +759,41 @@ function startProcessingStatusEvents() {
     applyProcessingStatus(data);
   });
   statusEventSource.onerror = () => {
-    refreshProcessingStatusesSilently();
+    statusEventSource?.close();
+    statusEventSource = null;
+    const now = Date.now();
+    if (now - lastErrorRefreshAt >= 20_000) {
+      lastErrorRefreshAt = now;
+      refreshProcessingStatusesSilently();
+    }
+    if (!statusReconnectTimer && statusEventsEnabled && getToken()) {
+      statusReconnectTimer = setTimeout(() => {
+        statusReconnectTimer = null;
+        startProcessingStatusEvents();
+      }, 3000);
+    }
   };
 }
 
-async function refreshProcessingStatusesSilently() {
-  const activeTasks = tasks.value.filter(task => {
-    if (task.status !== UploadStatus.Completed) return false;
-    return !task.processingState || task.processingState === 'PENDING' || task.processingState === 'RUNNING';
-  });
+function stopProcessingStatusEvents() {
+  if (statusReconnectTimer) clearTimeout(statusReconnectTimer);
+  statusReconnectTimer = null;
+  statusEventSource?.close();
+  statusEventSource = null;
+}
 
-  await Promise.all(activeTasks.map(refreshProcessingStatusSilently));
+function refreshProcessingStatusesSilently() {
+  if (statusRefreshPromise) return statusRefreshPromise;
+  statusRefreshPromise = (async () => {
+    const activeTasks = tasks.value.filter(task => {
+      if (task.status !== UploadStatus.Completed) return false;
+      return !task.processingState || task.processingState === 'PENDING' || task.processingState === 'RUNNING';
+    });
+    for (const task of activeTasks) await refreshProcessingStatusSilently(task);
+  })().finally(() => {
+    statusRefreshPromise = null;
+  });
+  return statusRefreshPromise;
 }
 
 async function refreshProcessingStatusSilently(task: Api.KnowledgeBase.UploadTask) {

@@ -65,7 +65,7 @@ public class SecurityConfig {
                             .requestMatchers("/api/v1/documents/download/content").permitAll()
                             // PDF预览接口在控制器内部按token校验文件访问权限，避免嵌入式预览被安全过滤器提前拦截
                             .requestMatchers("/api/v1/documents/preview/pdf").permitAll()
-                            // SSE 事件流无法稳定设置 Authorization header，控制器内部按 query token 校验
+                            // SSE 事件流使用一次性短期票据，避免把登录 JWT 放入 URL。
                             .requestMatchers("/api/v1/upload/status/events").permitAll()
                             // 文件上传和下载相关接口 - 普通用户和管理员都可访问
                             .requestMatchers("/api/v1/upload/**", "/api/v1/parse", "/api/v1/documents/download", "/api/v1/documents/preview").hasAnyRole("USER", "ADMIN", "SUPER_ADMIN")

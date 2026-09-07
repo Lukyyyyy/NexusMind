@@ -8,11 +8,20 @@ import java.time.LocalDateTime;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ProcessingStatusEventServiceTest {
 
     private final ProcessingStatusEventService service = new ProcessingStatusEventService();
+
+    @Test
+    void ticketCanOnlyBeConsumedOnce() {
+        String ticket = service.issueTicket("7");
+
+        assertEquals("7", service.consumeTicket(ticket));
+        assertNull(service.consumeTicket(ticket));
+    }
 
     @Test
     void durationUsesLatestProcessingStartInsteadOfRecordCreationTime() {

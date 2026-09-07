@@ -2,6 +2,10 @@ package com.luky.nexusmind.service;
 
 import com.luky.nexusmind.model.FileProcessingStatus;
 import com.luky.nexusmind.model.ProcessingState;
+import io.micrometer.core.instrument.Gauge;
+import io.micrometer.core.instrument.MeterRegistry;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
@@ -11,6 +15,7 @@ import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 
@@ -18,8 +23,32 @@ import java.util.concurrent.CopyOnWriteArrayList;
 public class ProcessingStatusEventService {
 
     private static final long SSE_TIMEOUT_MILLIS = 30L * 60L * 1000L;
+    private static final long TICKET_TTL_MILLIS = 60_000L;
 
     private final Map<String, List<SseEmitter>> emittersByUser = new ConcurrentHashMap<>();
+    private final Map<String, Ticket> tickets = new ConcurrentHashMap<>();
+
+    public ProcessingStatusEventService() {
+    }
+
+    @Autowired
+    public ProcessingStatusEventService(MeterRegistry meterRegistry) {
+        Gauge.builder("nexusmind.sse.emitters", this, ProcessingStatusEventService::emitterCount)
+                .description("Current processing status SSE emitters")
+                .register(meterRegistry);
+    }
+
+    public String issueTicket(String userId) {
+        // ponytail: in-memory tickets fit the single backend deployment; use Redis before horizontal scaling.
+        String ticket = UUID.randomUUID().toString();
+        tickets.put(ticket, new Ticket(userId, System.currentTimeMillis() + TICKET_TTL_MILLIS));
+        return ticket;
+    }
+
+    public String consumeTicket(String value) {
+        Ticket ticket = value == null ? null : tickets.remove(value);
+        return ticket != null && ticket.expiresAt() >= System.currentTimeMillis() ? ticket.userId() : null;
+    }
 
     public SseEmitter subscribe(String userId) {
         SseEmitter emitter = new SseEmitter(SSE_TIMEOUT_MILLIS);
@@ -34,7 +63,7 @@ public class ProcessingStatusEventService {
                     .name("connected")
                     .data(Map.of("serverTime", LocalDateTime.now())));
         } catch (IOException e) {
-            removeEmitter(userId, emitter);
+            discardEmitter(userId, emitter);
         }
 
         return emitter;
@@ -57,9 +86,25 @@ public class ProcessingStatusEventService {
                         .name("processing-status")
                         .data(payload));
             } catch (IOException | IllegalStateException e) {
-                removeEmitter(status.getUserId(), emitter);
+                discardEmitter(status.getUserId(), emitter);
             }
         }
+    }
+
+    @Scheduled(fixedDelay = 20_000L)
+    public void heartbeat() {
+        tickets.entrySet().removeIf(entry -> entry.getValue().expiresAt() < System.currentTimeMillis());
+        emittersByUser.forEach((userId, emitters) -> emitters.forEach(emitter -> {
+            try {
+                emitter.send(SseEmitter.event().comment("heartbeat"));
+            } catch (IOException | IllegalStateException e) {
+                discardEmitter(userId, emitter);
+            }
+        }));
+    }
+
+    public int emitterCount() {
+        return emittersByUser.values().stream().mapToInt(List::size).sum();
     }
 
     public Map<String, Object> toPayload(FileProcessingStatus status) {
@@ -118,14 +163,20 @@ public class ProcessingStatusEventService {
     }
 
     private void removeEmitter(String userId, SseEmitter emitter) {
-        List<SseEmitter> emitters = emittersByUser.get(userId);
-        if (emitters == null) {
-            return;
-        }
+        emittersByUser.computeIfPresent(userId, (ignored, emitters) -> {
+            emitters.remove(emitter);
+            return emitters.isEmpty() ? null : emitters;
+        });
+    }
 
-        emitters.remove(emitter);
-        if (emitters.isEmpty()) {
-            emittersByUser.remove(userId);
+    private void discardEmitter(String userId, SseEmitter emitter) {
+        removeEmitter(userId, emitter);
+        try {
+            emitter.complete();
+        } catch (IllegalStateException ignored) {
+            // Already completed by the servlet container.
         }
     }
+
+    private record Ticket(String userId, long expiresAt) {}
 }

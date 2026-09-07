@@ -315,17 +315,22 @@ public class UploadController {
     }
 
     @GetMapping(value = "/status/events", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public SseEmitter subscribeProcessingStatusEvents(@RequestParam("token") String token) {
-        if (token == null || token.isBlank() || !jwtUtils.validateToken(token)) {
-            throw new org.springframework.web.server.ResponseStatusException(HttpStatus.UNAUTHORIZED, "未登录或登录已过期");
-        }
-
-        String userId = jwtUtils.extractUserIdFromToken(token);
+    public SseEmitter subscribeProcessingStatusEvents(@RequestParam("ticket") String ticket) {
+        String userId = processingStatusEventService.consumeTicket(ticket);
         if (userId == null || userId.isBlank()) {
-            throw new org.springframework.web.server.ResponseStatusException(HttpStatus.UNAUTHORIZED, "Token缺少用户信息");
+            throw new org.springframework.web.server.ResponseStatusException(HttpStatus.UNAUTHORIZED, "SSE票据无效或已过期");
         }
 
         return processingStatusEventService.subscribe(userId);
+    }
+
+    @PostMapping("/status/ticket")
+    public ResponseEntity<Map<String, Object>> issueProcessingStatusTicket(
+            @RequestAttribute("userId") String userId) {
+        return ResponseEntity.ok(Map.of(
+                "code", 200,
+                "message", "SSE票据创建成功",
+                "data", Map.of("ticket", processingStatusEventService.issueTicket(userId))));
     }
 
     /**
