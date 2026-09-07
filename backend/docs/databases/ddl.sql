@@ -9,6 +9,8 @@ CREATE TABLE users (
                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
                        last_login_at TIMESTAMP DEFAULT NULL COMMENT '最后登录时间',
+                       enabled BIT NOT NULL DEFAULT 1 COMMENT '账户是否允许登录',
+                       session_version BIGINT NOT NULL DEFAULT 0 COMMENT '会话版本，用于批量使令牌失效',
                        INDEX idx_username (username) COMMENT '用户名索引'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户表';
 CREATE TABLE organization_tags (

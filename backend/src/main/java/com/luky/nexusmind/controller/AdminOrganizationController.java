@@ -12,6 +12,9 @@ import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.data.redis.core.StringRedisTemplate;
+
+import java.time.Duration;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -26,10 +29,13 @@ public class AdminOrganizationController {
     private final MailService mailService;
     private final UserRepository userRepository;
     private final JwtUtils jwtUtils;
+    private final AccountStatusService accountStatusService;
+    private final StringRedisTemplate redis;
 
     public AdminOrganizationController(OrganizationService organizationService, AuditService auditService,
                                        SmtpSettingsRepository smtpRepository, SmtpCryptoService smtpCrypto,
-                                       MailService mailService, UserRepository userRepository, JwtUtils jwtUtils) {
+                                       MailService mailService, UserRepository userRepository, JwtUtils jwtUtils,
+                                       AccountStatusService accountStatusService, StringRedisTemplate redis) {
         this.organizationService = organizationService;
         this.auditService = auditService;
         this.smtpRepository = smtpRepository;
@@ -37,6 +43,8 @@ public class AdminOrganizationController {
         this.mailService = mailService;
         this.userRepository = userRepository;
         this.jwtUtils = jwtUtils;
+        this.accountStatusService = accountStatusService;
+        this.redis = redis;
     }
 
     @GetMapping("/requests")
@@ -85,7 +93,8 @@ public class AdminOrganizationController {
                                          @RequestBody MembershipRequest request, HttpServletRequest http) {
         User admin = requireAdmin(token);
         User target = userRepository.findById(userId).orElseThrow(() -> new CustomException("用户不存在", HttpStatus.NOT_FOUND));
-        if (request.orgTags().contains("admin") || target.getRole().isAdministrator()) verifyPassword(admin, request.currentPassword());
+        if (request.orgTags().contains("admin") || target.getRole().isAdministrator())
+            verifyPassword(admin, request.currentPassword(), ip(http), userId);
         organizationService.assign(admin.getUsername(), userId, request.orgTags(), request.reason(), ip(http));
         return message("组织成员关系已更新");
     }
@@ -94,9 +103,18 @@ public class AdminOrganizationController {
     public ResponseEntity<?> superRole(@RequestHeader("Authorization") String token, @PathVariable Long userId,
                                        @RequestBody SuperRoleRequest request, HttpServletRequest http) {
         User admin = requireSuper(token);
-        verifyPassword(admin, request.currentPassword());
+        verifyPassword(admin, request.currentPassword(), ip(http), userId);
         organizationService.changeSuperRole(admin.getUsername(), userId, request.promote(), request.reason(), ip(http));
         return message("角色已更新");
+    }
+
+    @PutMapping("/users/{userId}/enabled")
+    public ResponseEntity<?> accountEnabled(@RequestHeader("Authorization") String token, @PathVariable Long userId,
+                                            @RequestBody AccountStatusRequest request, HttpServletRequest http) {
+        User admin = requireSuper(token);
+        verifyPassword(admin, request.currentPassword(), ip(http), userId);
+        accountStatusService.change(admin, userId, request.enabled(), request.reason(), ip(http));
+        return message(request.enabled() ? "账户已启用" : "账户已禁用");
     }
 
     @GetMapping("/audit")
@@ -137,7 +155,7 @@ public class AdminOrganizationController {
         User admin = requireSuper(token);
         if (mailService.usesTencentSes())
             throw new CustomException("腾讯云 SES 请通过部署环境变量配置", HttpStatus.BAD_REQUEST);
-        verifyPassword(admin, request.currentPassword());
+        verifyPassword(admin, request.currentPassword(), ip(http), null);
         SmtpSettings settings = smtpRepository.findById(1L).orElseGet(SmtpSettings::new);
         settings.setHost(request.host().trim()); settings.setPort(request.port()); settings.setUsername(request.username().trim());
         settings.setFromAddress(request.fromAddress().trim()); settings.setSslEnabled(request.sslEnabled()); settings.setEnabled(request.enabled());
@@ -178,8 +196,24 @@ public class AdminOrganizationController {
     }
     private User current(String token) { return userRepository.findByUsername(jwtUtils.extractUsernameFromToken(token.replace("Bearer ", "")))
             .orElseThrow(() -> new CustomException("用户不存在", HttpStatus.NOT_FOUND)); }
-    private void verifyPassword(User user, String password) {
-        if (password == null || !PasswordUtil.matches(password, user.getPassword())) throw new CustomException("当前密码错误", HttpStatus.FORBIDDEN);
+    private void verifyPassword(User user, String password, String ip, Long targetUserId) {
+        String key = "security:reauth:" + user.getId();
+        String current = redis.opsForValue().get(key);
+        if (current != null && Long.parseLong(current) >= 5) {
+            throw new CustomException("密码验证尝试过多，请 10 分钟后重试", HttpStatus.TOO_MANY_REQUESTS);
+        }
+        if (password != null && PasswordUtil.matches(password, user.getPassword())) {
+            redis.delete(key);
+            return;
+        }
+        Long failures = redis.opsForValue().increment(key);
+        if (failures != null && failures == 1) redis.expire(key, Duration.ofMinutes(10));
+        if (failures != null && failures >= 5) {
+            auditService.record(user, "SENSITIVE_REAUTH_RATE_LIMITED", targetUserId, null,
+                    "当前密码连续验证失败", ip);
+            throw new CustomException("密码验证尝试过多，请 10 分钟后重试", HttpStatus.TOO_MANY_REQUESTS);
+        }
+        throw new CustomException("当前密码错误", HttpStatus.FORBIDDEN);
     }
     private String ip(HttpServletRequest request) { String value = request.getHeader("X-Forwarded-For"); return value == null ? request.getRemoteAddr() : value.split(",")[0].trim(); }
     private ResponseEntity<?> ok(Object data) { return ResponseEntity.ok(Map.of("code", 200, "message", "成功", "data", data)); }
@@ -193,4 +227,5 @@ record MailEnabledRequest(boolean enabled) {}
 record TestMailRequest(String email) {}
 record MembershipRequest(java.util.List<String> orgTags, String reason, String currentPassword) {}
 record SuperRoleRequest(boolean promote, String reason, String currentPassword) {}
+record AccountStatusRequest(boolean enabled, String reason, String currentPassword) {}
 record JoinableRequest(boolean joinable) {}

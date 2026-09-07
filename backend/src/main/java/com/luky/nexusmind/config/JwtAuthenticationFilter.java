@@ -42,6 +42,18 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             if (token != null) {
                 String newToken = null;
                 String username = null;
+                UserDetails userDetails = null;
+
+                String signedUsername = jwtUtils.extractUsernameFromToken(token);
+                if (signedUsername != null) {
+                    userDetails = userDetailsService.loadUserByUsername(signedUsername);
+                    if (!userDetails.isEnabled()) {
+                        response.setStatus(HttpServletResponse.SC_FORBIDDEN);
+                        response.setContentType("application/json;charset=UTF-8");
+                        response.getWriter().write("{\"code\":\"ACCOUNT_DISABLED\",\"message\":\"你的账户已被禁用，请联系超级管理员\"}");
+                        return;
+                    }
+                }
                 
                 // 首先检查token是否有效
                 if (jwtUtils.validateToken(token)) {
@@ -71,7 +83,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                 
                 // 设置用户认证信息
                 if (username != null && !username.isEmpty()) {
-                    UserDetails userDetails = userDetailsService.loadUserByUsername(username);
+                    if (userDetails == null) userDetails = userDetailsService.loadUserByUsername(username);
                     UsernamePasswordAuthenticationToken authentication = new UsernamePasswordAuthenticationToken(
                             userDetails, null, userDetails.getAuthorities());
                     authentication.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));

@@ -136,6 +136,24 @@ class UserServiceTest {
     }
 
     @Test
+    void disabledAccountIsRevealedOnlyAfterCorrectPassword() {
+        User user = new User();
+        user.setUsername("testuser");
+        user.setEmail("test@example.com");
+        user.setEmailVerifiedAt(LocalDateTime.now());
+        user.setPassword(PasswordUtil.encode("correct-password"));
+        user.setEnabled(false);
+        users.save(user);
+
+        assertEquals(HttpStatus.UNAUTHORIZED,
+                assertThrows(CustomException.class,
+                        () -> userService.authenticateUser("test@example.com", "wrong-password")).getStatus());
+        CustomException disabled = assertThrows(CustomException.class,
+                () -> userService.authenticateUser("test@example.com", "correct-password"));
+        assertEquals("ACCOUNT_DISABLED", disabled.getCode());
+    }
+
+    @Test
     void resetPasswordConsumesCodeAndChangesPassword() {
         User user = new User();
         user.setUsername("testuser");

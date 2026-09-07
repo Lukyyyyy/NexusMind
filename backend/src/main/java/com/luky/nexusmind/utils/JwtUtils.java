@@ -25,6 +25,8 @@ import java.util.UUID;
 @Component
 public class JwtUtils {
     private static final Logger logger = LoggerFactory.getLogger(JwtUtils.class);
+    public static final String ACCOUNT_DISABLED_CODE = "ACCOUNT_DISABLED";
+    public static final String ACCOUNT_DISABLED_MESSAGE = "你的账户已被禁用，请联系超级管理员";
 
     @Value("${jwt.secret-key}")
     private String secretKey;
@@ -76,6 +78,7 @@ public class JwtUtils {
         // 获取用户信息
         User user = userRepository.findByUsername(username)
                 .orElseThrow(() -> new RuntimeException("User not found"));
+        requireEnabled(user);
         
         // 生成唯一的tokenId
         String tokenId = generateTokenId();
@@ -86,6 +89,7 @@ public class JwtUtils {
         claims.put("tokenId", tokenId); // 添加tokenId用于Redis缓存
         claims.put("role", user.getRole().name());
         claims.put("userId", user.getId().toString()); // 添加用户ID到JWT
+        claims.put("sessionVersion", user.getSessionVersion());
         
         // 添加组织标签信息
         if (user.getOrgTags() != null && !user.getOrgTags().isEmpty()) {
@@ -130,10 +134,14 @@ public class JwtUtils {
             }
             
             // Redis验证通过，再验证JWT签名（双重验证）
-            Jwts.parserBuilder()
+            Claims claims = Jwts.parserBuilder()
                     .setSigningKey(getSigningKey())
                     .build()
-                    .parseClaimsJws(token);
+                    .parseClaimsJws(token)
+                    .getBody();
+
+            User user = userRepository.findByUsername(claims.getSubject()).orElse(null);
+            if (user == null || !user.isEnabled() || tokenVersion(claims) != user.getSessionVersion()) return false;
 
             logger.debug("Token validation successful: {}", tokenId);
             return true;
@@ -260,6 +268,8 @@ public class JwtUtils {
             
             String username = claims.getSubject();
             if (username == null || username.isEmpty()) return null;
+            User user = userRepository.findByUsername(username).orElse(null);
+            if (user == null || !user.isEnabled() || tokenVersion(claims) != user.getSessionVersion()) return null;
             
             // 重新生成token
             String newToken = generateToken(username);
@@ -314,6 +324,7 @@ public class JwtUtils {
         // 获取用户信息
         User user = userRepository.findByUsername(username)
                 .orElseThrow(() -> new RuntimeException("User not found"));
+        requireEnabled(user);
         
         // 生成唯一的refreshTokenId
         String refreshTokenId = generateTokenId();
@@ -323,6 +334,7 @@ public class JwtUtils {
         Map<String, Object> claims = new HashMap<>();
         claims.put("refreshTokenId", refreshTokenId); // 添加refreshTokenId
         claims.put("userId", user.getId().toString());
+        claims.put("sessionVersion", user.getSessionVersion());
         claims.put("type", "refresh"); // 标识这是一个refresh token
 
         String refreshToken = Jwts.builder()
@@ -370,6 +382,9 @@ public class JwtUtils {
                 logger.warn("Token is not a refresh token");
                 return false;
             }
+
+            User user = userRepository.findByUsername(claims.getSubject()).orElse(null);
+            if (user == null || !user.isEnabled() || tokenVersion(claims) != user.getSessionVersion()) return false;
 
             logger.debug("Refresh token validation successful: {}", refreshTokenId);
             return true;
@@ -446,10 +461,26 @@ public class JwtUtils {
      */
     public void invalidateAllUserTokens(String userId) {
         try {
+            userRepository.findById(Long.valueOf(userId)).ifPresent(user -> {
+                user.setSessionVersion(user.getSessionVersion() + 1);
+                userRepository.save(user);
+            });
             tokenCacheService.removeAllUserTokens(userId);
             logger.info("All tokens invalidated for user: {}", userId);
         } catch (Exception e) {
             logger.error("Error invalidating all user tokens: {}", userId, e);
+        }
+    }
+
+    private long tokenVersion(Claims claims) {
+        Number value = claims.get("sessionVersion", Number.class);
+        return value == null ? 0L : value.longValue();
+    }
+
+    private void requireEnabled(User user) {
+        if (!user.isEnabled()) {
+            throw new com.luky.nexusmind.exception.CustomException(
+                    ACCOUNT_DISABLED_MESSAGE, org.springframework.http.HttpStatus.FORBIDDEN, ACCOUNT_DISABLED_CODE);
         }
     }
 }

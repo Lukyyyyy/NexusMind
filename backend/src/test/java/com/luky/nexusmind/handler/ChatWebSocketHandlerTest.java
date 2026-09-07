@@ -21,7 +21,9 @@ class ChatWebSocketHandlerTest {
     void chatMessagesUseUsernameForSessionStateAndNumericUserIdForTracing() throws Exception {
         CapturingChatHandler chatHandler = new CapturingChatHandler();
         JwtUtils jwtUtils = new FixedJwtUtils("42", "admin");
-        ChatWebSocketHandler handler = new ChatWebSocketHandler(chatHandler, jwtUtils, fixedUserRepository(null));
+        User admin = new User();
+        admin.setUsername("admin");
+        ChatWebSocketHandler handler = new ChatWebSocketHandler(chatHandler, jwtUtils, fixedUserRepository(admin));
         WebSocketSession session = fixedSession();
 
         handler.handleTextMessage(session, new TextMessage("hello"));

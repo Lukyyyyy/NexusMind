@@ -28,6 +28,7 @@ public class TokenCacheService {
     private static final String TOKEN_PREFIX = "jwt:valid:";
     private static final String USER_TOKENS_PREFIX = "jwt:user:";
     private static final String REFRESH_PREFIX = "jwt:refresh:";
+    private static final String USER_REFRESH_TOKENS_SUFFIX = ":refresh-tokens";
     private static final String BLACKLIST_PREFIX = "jwt:blacklist:";
     
     /**
@@ -68,6 +69,9 @@ public class TokenCacheService {
             
             long ttlSeconds = (expireTimeMs - System.currentTimeMillis()) / 1000;
             redisTemplate.opsForValue().set(key, refreshInfo, ttlSeconds, TimeUnit.SECONDS);
+            String userRefreshKey = USER_TOKENS_PREFIX + userId + USER_REFRESH_TOKENS_SUFFIX;
+            redisTemplate.opsForSet().add(userRefreshKey, refreshTokenId);
+            redisTemplate.expire(userRefreshKey, Duration.ofSeconds(ttlSeconds));
             
             logger.debug("Refresh token cached: {} for user: {}", refreshTokenId, userId);
         } catch (Exception e) {
@@ -202,6 +206,13 @@ public class TokenCacheService {
             
             // 清空用户token集合
             redisTemplate.delete(userTokenKey);
+
+            String refreshTokenKey = USER_TOKENS_PREFIX + userId + USER_REFRESH_TOKENS_SUFFIX;
+            Set<Object> refreshTokenIds = redisTemplate.opsForSet().members(refreshTokenKey);
+            if (refreshTokenIds != null && !refreshTokenIds.isEmpty()) {
+                redisTemplate.delete(refreshTokenIds.stream().map(id -> REFRESH_PREFIX + id).toList());
+            }
+            redisTemplate.delete(refreshTokenKey);
             
             logger.info("All tokens removed for user: {}", userId);
         } catch (Exception e) {

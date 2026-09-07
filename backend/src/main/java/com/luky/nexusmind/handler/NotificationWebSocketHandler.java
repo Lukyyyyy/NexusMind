@@ -24,13 +24,16 @@ public class NotificationWebSocketHandler extends TextWebSocketHandler implement
     private final StringRedisTemplate redis;
     private final UserRepository userRepository;
     private final ObjectMapper objectMapper;
+    private final ChatWebSocketHandler chatWebSocketHandler;
     private final SecureRandom random = new SecureRandom();
     private final ConcurrentHashMap<Long, Set<WebSocketSession>> sessions = new ConcurrentHashMap<>();
 
-    public NotificationWebSocketHandler(StringRedisTemplate redis, UserRepository userRepository, ObjectMapper objectMapper) {
+    public NotificationWebSocketHandler(StringRedisTemplate redis, UserRepository userRepository, ObjectMapper objectMapper,
+                                        ChatWebSocketHandler chatWebSocketHandler) {
         this.redis = redis;
         this.userRepository = userRepository;
         this.objectMapper = objectMapper;
+        this.chatWebSocketHandler = chatWebSocketHandler;
     }
 
     public String issueTicket(String username) {
@@ -45,7 +48,8 @@ public class NotificationWebSocketHandler extends TextWebSocketHandler implement
     public void afterConnectionEstablished(WebSocketSession session) throws Exception {
         String ticket = lastPathSegment(session);
         String username = redis.opsForValue().getAndDelete(TICKET_PREFIX + ticket);
-        Long userId = username == null ? null : userRepository.findByUsername(username).map(user -> user.getId()).orElse(null);
+        Long userId = username == null ? null : userRepository.findByUsername(username)
+                .filter(com.luky.nexusmind.model.User::isEnabled).map(user -> user.getId()).orElse(null);
         if (userId == null) {
             session.close(CloseStatus.POLICY_VIOLATION);
             return;
@@ -71,15 +75,50 @@ public class NotificationWebSocketHandler extends TextWebSocketHandler implement
         try {
             String payload = new String(message.getBody(), java.nio.charset.StandardCharsets.UTF_8);
             JsonNode json = objectMapper.readTree(payload);
-            Set<WebSocketSession> targets = sessions.get(json.path("userId").asLong());
-            if (targets == null) return;
+            long userId = json.path("userId").asLong();
+            Set<WebSocketSession> targets = sessions.get(userId);
             TextMessage outbound = new TextMessage(payload);
-            for (WebSocketSession session : targets) {
-                if (session.isOpen()) synchronized (session) { session.sendMessage(outbound); }
+            if (targets != null) {
+                for (WebSocketSession session : targets) {
+                    if (session.isOpen()) synchronized (session) { session.sendMessage(outbound); }
+                }
+            }
+            if ("ACCOUNT_DISABLED".equals(json.path("data").path("type").asText())) {
+                userRepository.findById(userId).ifPresent(user -> chatWebSocketHandler.disconnectUser(user.getUsername()));
+                disconnectUser(userId);
             }
         } catch (Exception ignored) {
             // Durable notification history repairs any missed real-time event.
         }
+    }
+
+    public void disconnectUser(Long userId) {
+        Set<WebSocketSession> targets = sessions.remove(userId);
+        if (targets == null) return;
+        for (WebSocketSession session : targets) {
+            try {
+                if (session.isOpen()) session.close(CloseStatus.POLICY_VIOLATION);
+            } catch (Exception ignored) {
+                // Session cleanup is best effort after the account has already been disabled.
+            }
+        }
+    }
+
+    public void notifyDisabledAndDisconnect(Long userId) {
+        Set<WebSocketSession> targets = sessions.get(userId);
+        if (targets != null) {
+            try {
+                TextMessage message = new TextMessage(objectMapper.writeValueAsString(java.util.Map.of(
+                        "event", "account_disabled",
+                        "data", java.util.Map.of("content", "你的账户已被禁用，请联系超级管理员"))));
+                for (WebSocketSession session : targets) {
+                    if (session.isOpen()) synchronized (session) { session.sendMessage(message); }
+                }
+            } catch (Exception ignored) {
+                // The next authenticated request still returns ACCOUNT_DISABLED.
+            }
+        }
+        disconnectUser(userId);
     }
 
     private String lastPathSegment(WebSocketSession session) {

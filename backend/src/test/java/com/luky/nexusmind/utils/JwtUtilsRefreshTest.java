@@ -1,6 +1,7 @@
 package com.luky.nexusmind.utils;
 
 import com.luky.nexusmind.model.User;
+import com.luky.nexusmind.exception.CustomException;
 import com.luky.nexusmind.repository.UserRepository;
 import com.luky.nexusmind.service.TokenCacheService;
 import org.junit.jupiter.api.BeforeEach;
@@ -65,6 +66,21 @@ public class JwtUtilsRefreshTest {
         // 提取用户名
         String username = jwtUtils.extractUsernameFromToken(token);
         assertEquals("testuser", username);
+    }
+
+    @Test
+    void sessionVersionInvalidatesExistingToken() {
+        String token = jwtUtils.generateToken("testuser");
+        testUser.setSessionVersion(1);
+        assertFalse(jwtUtils.validateToken(token));
+        assertNull(jwtUtils.refreshToken(token));
+    }
+
+    @Test
+    void disabledUserCannotReceiveNewToken() {
+        testUser.setEnabled(false);
+        CustomException error = assertThrows(CustomException.class, () -> jwtUtils.generateToken("testuser"));
+        assertEquals(JwtUtils.ACCOUNT_DISABLED_CODE, error.getCode());
     }
 
     @Test

@@ -278,6 +278,7 @@ public class OrganizationService {
         String cleanReason = required(reason, "变更原因");
         if (promote) {
             if (target.getRole() != User.Role.ADMIN) throw new CustomException("只能将管理员提升为超级管理员", HttpStatus.CONFLICT);
+            if (!target.isEnabled()) throw new CustomException("请先启用该账户，再提升为超级管理员", HttpStatus.CONFLICT);
             target.setRole(User.Role.SUPER_ADMIN);
         } else {
             if (target.getRole() != User.Role.SUPER_ADMIN) throw new CustomException("目标用户不是超级管理员", HttpStatus.CONFLICT);

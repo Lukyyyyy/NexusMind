@@ -9,17 +9,19 @@ import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.handler.TextWebSocketHandler;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.luky.nexusmind.repository.UserRepository;
+import com.luky.nexusmind.model.User;
 import com.luky.nexusmind.service.ChatHandler;
 import com.luky.nexusmind.utils.JwtUtils;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.Map;
+import java.util.Set;
 
 @Component
 public class ChatWebSocketHandler extends TextWebSocketHandler {
     
     private static final Logger logger = LoggerFactory.getLogger(ChatWebSocketHandler.class);
     private final ChatHandler chatHandler;
-    private final ConcurrentHashMap<String, WebSocketSession> sessions = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, Set<WebSocketSession>> sessions = new ConcurrentHashMap<>();
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final JwtUtils jwtUtils;
     private final UserRepository userRepository;
@@ -34,9 +36,16 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
     }
 
     @Override
-    public void afterConnectionEstablished(WebSocketSession session) {
+    public void afterConnectionEstablished(WebSocketSession session) throws Exception {
+        String token = lastPathSegment(session);
+        String username = jwtUtils.extractUsernameFromToken(token);
+        User user = username == null ? null : userRepository.findByUsername(username).orElse(null);
+        if (!jwtUtils.validateToken(token) || user == null || !user.isEnabled()) {
+            session.close(CloseStatus.POLICY_VIOLATION);
+            return;
+        }
         UserIdentity identity = extractUserIdentity(session);
-        sessions.put(identity.chatUserId(), session);
+        sessions.computeIfAbsent(identity.chatUserId(), ignored -> ConcurrentHashMap.newKeySet()).add(session);
         logger.info("WebSocket连接已建立，用户ID: {}，会话ID: {}",
                     identity.chatUserId(), session.getId());
     }
@@ -45,6 +54,10 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
     protected void handleTextMessage(WebSocketSession session, TextMessage message) {
         UserIdentity identity = extractUserIdentity(session);
         try {
+            if (userRepository.findByUsername(identity.chatUserId()).filter(User::isEnabled).isEmpty()) {
+                disconnectUser(identity.chatUserId());
+                return;
+            }
             String payload = message.getPayload();
             logger.info("接收到消息，用户ID: {}，会话ID: {}，消息长度: {}", 
                        identity.chatUserId(), session.getId(), payload.length());
@@ -96,7 +109,11 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
     @Override
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
         UserIdentity identity = extractUserIdentity(session);
-        sessions.remove(identity.chatUserId());
+        Set<WebSocketSession> values = sessions.get(identity.chatUserId());
+        if (values != null) {
+            values.remove(session);
+            if (values.isEmpty()) sessions.remove(identity.chatUserId());
+        }
         logger.info("WebSocket连接已关闭，用户ID: {}，会话ID: {}，状态: {}", 
                     identity.chatUserId(), session.getId(), status);
     }
@@ -138,6 +155,24 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
 
     private static boolean hasText(String value) {
         return value != null && !value.trim().isEmpty();
+    }
+
+    public void disconnectUser(String username) {
+        Set<WebSocketSession> userSessions = sessions.remove(username);
+        if (userSessions == null) return;
+        for (WebSocketSession session : userSessions) {
+            chatHandler.stopResponse(username, session);
+            try {
+                if (session.isOpen()) session.close(CloseStatus.POLICY_VIOLATION);
+            } catch (Exception e) {
+                logger.debug("关闭已禁用用户的聊天会话失败: {}", e.getMessage());
+            }
+        }
+    }
+
+    private String lastPathSegment(WebSocketSession session) {
+        String path = session.getUri() == null ? "" : session.getUri().getPath();
+        return path.substring(path.lastIndexOf('/') + 1);
     }
 
     private record UserIdentity(String chatUserId, String traceUserId) {

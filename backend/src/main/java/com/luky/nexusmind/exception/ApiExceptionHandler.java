@@ -11,6 +11,6 @@ public class ApiExceptionHandler {
     @ExceptionHandler(CustomException.class)
     ResponseEntity<?> custom(CustomException exception) {
         return ResponseEntity.status(exception.getStatus())
-                .body(Map.of("code", exception.getStatus().value(), "message", exception.getMessage()));
+                .body(Map.of("code", exception.getCode(), "message", exception.getMessage()));
     }
 }

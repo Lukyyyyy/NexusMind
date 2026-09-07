@@ -10,6 +10,7 @@ import com.luky.nexusmind.repository.FileUploadRepository;
 import com.luky.nexusmind.repository.OrganizationMembershipRepository;
 import com.luky.nexusmind.repository.OrganizationJoinRequestRepository;
 import com.luky.nexusmind.utils.PasswordUtil;
+import com.luky.nexusmind.utils.JwtUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -297,6 +298,10 @@ public class UserService {
         if (!PasswordUtil.matches(password, user.getPassword())) {
             // 若不匹配，抛出自定义异常，状态码为 401 Unauthorized
             throw new CustomException("邮箱或密码错误", HttpStatus.UNAUTHORIZED);
+        }
+        if (!user.isEnabled()) {
+            throw new CustomException(JwtUtils.ACCOUNT_DISABLED_MESSAGE, HttpStatus.FORBIDDEN,
+                    JwtUtils.ACCOUNT_DISABLED_CODE);
         }
         ensureDefaultOrgAssigned(user);
         // 认证成功，记录最后登录时间
@@ -926,86 +931,26 @@ public class UserService {
 
     public Map<String, Object> getUserList(String keyword, String orgTag, Integer status, int page, int size, boolean revealEmail,
                                            String sortField, String sortOrder) {
+        if (status != null && status != 0 && status != 1) {
+            throw new CustomException("启用状态无效", HttpStatus.BAD_REQUEST);
+        }
         // 页码从1开始，需要转换为从0开始
         int pageIndex = page > 0 ? page - 1 : 0;
         // 创建分页请求
         Pageable pageable = PageRequest.of(pageIndex, size, resolveUserListSort(sortField, sortOrder));
         
-        // 获取用户列表
-        Page<User> userPage;
-        
-        if (orgTag != null && !orgTag.isEmpty()) {
-            // 按组织标签过滤用户
-            // 由于我们存储组织标签为逗号分隔的字符串，需要自定义实现
-            // 这里简化处理，获取所有用户后手动过滤
-            List<User> allUsers = userRepository.findAll();
-            List<User> filteredUsers = allUsers.stream()
-                    .filter(user -> {
-                        // 过滤组织标签
-                        if (user.getOrgTags() != null && !user.getOrgTags().isEmpty()) {
-                            Set<String> userTags = new HashSet<>(Arrays.asList(user.getOrgTags().split(",")));
-                            if (!userTags.contains(orgTag)) {
-                                return false;
-                            }
-                        } else {
-                            return false;
-                        }
-                        
-                        // 过滤关键词
-                        if (keyword != null && !keyword.isEmpty()) {
-                            boolean matchesKeyword = user.getUsername().contains(keyword)
-                                    || Objects.toString(user.getDisplayName(), "").contains(keyword);
-                            if (!matchesKeyword) {
-                                return false;
-                            }
-                        }
-                        
-                        // 过滤状态
-                        if (status != null) {
-                            return status == 1 ? user.getRole() == User.Role.USER : user.getRole().isAdministrator();
-                        }
-                        
-                        return true;
-                    })
-                    .collect(Collectors.toList());
-
-            // 手动排序（与数据库排序规则保持一致）
-            filteredUsers.sort(resolveUserListComparator(sortField, sortOrder));
-
-            // 手动分页
-            int start = (int) pageable.getOffset();
-            int end = Math.min((start + pageable.getPageSize()), filteredUsers.size());
-            
-            List<User> pageContent = start < end ? filteredUsers.subList(start, end) : Collections.emptyList();
-            userPage = new PageImpl<>(pageContent, pageable, filteredUsers.size());
-        } else {
-            // 使用 JPA 分页查询（不含组织标签过滤）
-            // 这里假设UserRepository有findByKeywordAndStatus方法，实际中可能需要自定义实现
-            userPage = userRepository.findAll(pageable);
-            
-            // 手动过滤（简化实现）
-            List<User> filteredUsers = userPage.getContent().stream()
-                    .filter(user -> {
-                        // 过滤关键词
-                        if (keyword != null && !keyword.isEmpty()) {
-                            boolean matchesKeyword = user.getUsername().contains(keyword)
-                                    || Objects.toString(user.getDisplayName(), "").contains(keyword);
-                            if (!matchesKeyword) {
-                                return false;
-                            }
-                        }
-                        
-                        // 过滤状态
-                        if (status != null) {
-                            return status == 1 ? user.getRole() == User.Role.USER : user.getRole().isAdministrator();
-                        }
-                        
-                        return true;
-                    })
-                    .collect(Collectors.toList());
-                    
-            userPage = new PageImpl<>(filteredUsers, pageable, filteredUsers.size());
-        }
+        List<User> filteredUsers = userRepository.findAll().stream()
+                .filter(user -> orgTag == null || orgTag.isEmpty() || user.getOrgTags() != null
+                        && Arrays.asList(user.getOrgTags().split(",")).contains(orgTag))
+                .filter(user -> keyword == null || keyword.isEmpty() || user.getUsername().contains(keyword)
+                        || Objects.toString(user.getDisplayName(), "").contains(keyword))
+                .filter(user -> status == null || user.isEnabled() == (status == 1))
+                .sorted(resolveUserListComparator(sortField, sortOrder))
+                .toList();
+        int start = Math.min((int) pageable.getOffset(), filteredUsers.size());
+        int end = Math.min(start + pageable.getPageSize(), filteredUsers.size());
+        // ponytail: 用户列表已有组织标签内存过滤；用户量显著增长时再统一下沉为数据库查询。
+        Page<User> userPage = new PageImpl<>(filteredUsers.subList(start, end), pageable, filteredUsers.size());
         
         // 转换为前端需要的格式
         List<Map<String, Object>> userList = userPage.getContent().stream()
@@ -1026,7 +971,7 @@ public class UserService {
                     
                     userMap.put("orgTags", orgTagDetails);
                     userMap.put("primaryOrg", user.getPrimaryOrg());
-                    userMap.put("status", user.getRole() == User.Role.USER ? 1 : 0);
+                    userMap.put("status", user.isEnabled() ? 1 : 0);
                     userMap.put("role", user.getRole());
                     userMap.put("email", user.getEmailVerifiedAt() == null ? "" : revealEmail ? user.getEmail() : maskEmail(user.getEmail()));
                     userMap.put("emailVerified", user.getEmailVerifiedAt() != null);

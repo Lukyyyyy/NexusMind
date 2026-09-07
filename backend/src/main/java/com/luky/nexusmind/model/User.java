@@ -46,6 +46,12 @@ public class User {
     @Column(name = "organization_email_enabled", nullable = false)
     private boolean organizationEmailEnabled = true;
 
+    @Column(nullable = false)
+    private boolean enabled = true;
+
+    @Column(name = "session_version", nullable = false)
+    private long sessionVersion;
+
     @CreationTimestamp
     private LocalDateTime createdAt;
 

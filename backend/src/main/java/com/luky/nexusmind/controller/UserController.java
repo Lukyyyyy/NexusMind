@@ -64,7 +64,7 @@ public class UserController {
         } catch (CustomException e) {
             LogUtils.logBusinessError("USER_REGISTER", "anonymous", "用户注册失败: %s", e, e.getMessage());
             monitor.end("注册失败: " + e.getMessage());
-            return ResponseEntity.status(e.getStatus()).body(Map.of("code", e.getStatus().value(), "message", e.getMessage()));
+            return ResponseEntity.status(e.getStatus()).body(Map.of("code", e.getCode(), "message", e.getMessage()));
         } catch (Exception e) {
             LogUtils.logBusinessError("USER_REGISTER", "anonymous", "用户注册异常: %s", e, e.getMessage());
             monitor.end("注册异常: " + e.getMessage());
@@ -102,7 +102,7 @@ public class UserController {
         } catch (CustomException e) {
             LogUtils.logBusinessError("USER_LOGIN", "anonymous", "登录失败: %s", e, e.getMessage());
             monitor.end("登录失败: " + e.getMessage());
-            return ResponseEntity.status(e.getStatus()).body(Map.of("code", e.getStatus().value(), "message", e.getMessage()));
+            return ResponseEntity.status(e.getStatus()).body(Map.of("code", e.getCode(), "message", e.getMessage()));
         } catch (Exception e) {
             LogUtils.logBusinessError("USER_LOGIN", "anonymous", "登录异常: %s", e, e.getMessage());
             monitor.end("登录异常: " + e.getMessage());
