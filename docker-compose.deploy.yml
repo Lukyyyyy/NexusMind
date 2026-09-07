@@ -208,6 +208,8 @@ services:
   web:
     build:
       context: ./frontend
+      args:
+        FRONTEND_BUILD_HEAP_MB: ${FRONTEND_BUILD_HEAP_MB:-2048}
     image: nexusmind-web:local
     container_name: nexusmind-web
     restart: unless-stopped

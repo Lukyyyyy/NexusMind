@@ -2,7 +2,9 @@ FROM node:22-alpine AS build
 
 RUN corepack enable
 WORKDIR /workspace
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+ARG FRONTEND_BUILD_HEAP_MB=2048
+ENV NODE_OPTIONS="--max-old-space-size=${FRONTEND_BUILD_HEAP_MB}"
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 COPY packages ./packages
 RUN pnpm install --frozen-lockfile --registry=https://registry.npmmirror.com
 COPY . .
