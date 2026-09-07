@@ -9,6 +9,30 @@ import type { RequestInstanceState } from './type';
 
 const isHttpProxy = import.meta.env.DEV && import.meta.env.VITE_HTTP_PROXY === 'Y';
 const { baseURL } = getServiceBaseURL(import.meta.env, isHttpProxy);
+let accountDisabledDialogVisible = false;
+
+export function handleAccountDisabled(message = '你的账户已被禁用，请联系超级管理员') {
+  if (accountDisabledDialogVisible) return;
+  accountDisabledDialogVisible = true;
+  const logout = () => {
+    accountDisabledDialogVisible = false;
+    useAuthStore().resetStore();
+  };
+  if (!window.$dialog) {
+    logout();
+    return;
+  }
+  window.$dialog.error({
+    title: '账户已禁用',
+    content: message,
+    positiveText: $t('common.confirm'),
+    maskClosable: false,
+    closeOnEsc: false,
+    closable: false,
+    onPositiveClick: logout,
+    onClose: logout
+  });
+}
 
 function getFlatRequest(options: Partial<RequestOption<App.Service.Response>> = {}) {
   const request = createFlatRequest<App.Service.Response, RequestInstanceState>(
@@ -40,6 +64,11 @@ function getFlatRequest(options: Partial<RequestOption<App.Service.Response>> = 
         console.log('%c [ 👉 onBackendFail 👈 ]-35', 'font-size:16px; background:#3cd735; color:#80ff79;', response);
         const authStore = useAuthStore();
         const responseCode = String(response.data.code);
+
+        if (responseCode === 'ACCOUNT_DISABLED') {
+          handleAccountDisabled(response.data.message);
+          return null;
+        }
 
         function handleLogout() {
           authStore.resetStore();
@@ -106,6 +135,11 @@ function getFlatRequest(options: Partial<RequestOption<App.Service.Response>> = 
         // when the request is fail, you can show error message
 
         if (error.code === 'ERR_CANCELED') return;
+
+        if (String(error.response?.data?.code || '') === 'ACCOUNT_DISABLED') {
+          handleAccountDisabled(error.response?.data?.message);
+          return;
+        }
 
         // 只有 401 表示登录身份失效；403 只是当前用户无权执行该操作，不能清空登录态。
         if (error.response?.status === 401 && getAuthorization()) {

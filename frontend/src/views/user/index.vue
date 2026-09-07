@@ -80,12 +80,17 @@ const { columns, columnChecks, data, getData, getDataByPage, loading, mobilePagi
       key: 'operate',
       title: '操作',
       fixed: 'right',
-      width: 250,
+      width: 320,
       render: row => (
         <div class="flex gap-2">
           <NButton type="primary" ghost size="small" onClick={() => handleOrgTag(row)}>管理组织</NButton>
-          <NButton ghost size="small" onClick={() => handleAudit(row)}>组织记录</NButton>
-          {authStore.isSuperAdmin && row.role !== 'USER' && String(row.userId) !== String(authStore.userInfo.id) ? <NButton ghost size="small" type="warning" onClick={() => handleRole(row)}>角色</NButton> : null}
+          <NButton ghost size="small" onClick={() => handleAudit(row)}>操作记录</NButton>
+          {authStore.isSuperAdmin && row.status && row.role !== 'USER' && String(row.userId) !== String(authStore.userInfo.id) ? <NButton ghost size="small" type="warning" onClick={() => handleRole(row)}>角色</NButton> : null}
+          {authStore.isSuperAdmin && row.role !== 'SUPER_ADMIN' && String(row.userId) !== String(authStore.userInfo.id) ? (
+            <NButton ghost size="small" type={row.status ? 'error' : 'primary'} onClick={() => handleStatus(row)}>
+              {row.status ? '禁用' : '启用'}
+            </NButton>
+          ) : null}
         </div>
       )
     }
@@ -129,6 +134,33 @@ async function submitRole() {
   return !error;
 }
 
+const statusVisible = ref(false);
+const statusUser = ref<Api.User.Item | null>(null);
+const statusReason = ref('');
+const statusPassword = ref('');
+function handleStatus(row: Api.User.Item) {
+  statusUser.value = row;
+  statusReason.value = '';
+  statusPassword.value = '';
+  statusVisible.value = true;
+}
+async function submitStatus() {
+  const reason = statusReason.value.trim();
+  if (Array.from(reason).length < 2 || !statusPassword.value) return false;
+  const enabled = !statusUser.value?.status;
+  const { error } = await request({
+    url: `/admin/organization-management/users/${statusUser.value?.userId}/enabled`,
+    method: 'PUT',
+    data: { enabled, reason, currentPassword: statusPassword.value }
+  });
+  if (!error) {
+    statusVisible.value = false;
+    window.$message?.success(enabled ? '账户已启用' : '账户已禁用');
+    await getData();
+  }
+  return !error;
+}
+
 // async function setPrimaryOrgTag(userId: string, primaryOrg: string) {
 //   loading.value = true;
 //   const { error } = await request({ url: 'users/primary-org', method: 'PUT', data: { primaryOrg, userId } });
@@ -157,7 +189,7 @@ async function submitRole() {
         :scroll-x="1464"
         :loading="loading"
         remote
-        :row-key="row => row.id"
+        :row-key="row => row.userId"
         :pagination="mobilePagination"
         class="sm:h-full"
         @update:sorter="handleSorterChange"
@@ -169,6 +201,20 @@ async function submitRole() {
       <NAlert type="warning" :bordered="false" class="mb-12px">此操作将使 {{ roleUser?.displayName || roleUser?.username }}（{{ roleUser?.username }}）的所有登录会话立即失效。</NAlert>
       <NInput v-model:value="roleReason" type="textarea" maxlength="200" show-count placeholder="变更原因（必填）" class="mb-10px" />
       <NInput v-model:value="currentPassword" type="password" show-password-on="click" placeholder="输入你的当前密码" />
+    </NModal>
+    <NModal
+      v-model:show="statusVisible"
+      preset="dialog"
+      :title="statusUser?.status ? '禁用账户' : '启用账户'"
+      :positive-text="statusUser?.status ? '确认禁用' : '确认启用'"
+      negative-text="取消"
+      @positive-click="submitStatus"
+    >
+      <NAlert :type="statusUser?.status ? 'error' : 'info'" :bordered="false" class="mb-12px">
+        {{ statusUser?.status ? '该用户将立即下线并无法再登录。' : '启用后用户需要重新登录。' }}
+      </NAlert>
+      <NInput v-model:value="statusReason" type="textarea" minlength="2" maxlength="200" show-count placeholder="变更原因（必填，2–200 字）" class="mb-10px" />
+      <NInput v-model:value="statusPassword" type="password" show-password-on="click" placeholder="输入你的当前密码" />
     </NModal>
   </div>
 </template>

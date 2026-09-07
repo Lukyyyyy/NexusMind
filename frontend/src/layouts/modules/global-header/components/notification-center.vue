@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import dayjs from 'dayjs';
+import { handleAccountDisabled } from '@/service/request';
 defineOptions({ name: 'NotificationCenter' });
 
 const router = useRouter();
@@ -30,7 +31,11 @@ async function connect() {
   socket = new WebSocket(`${protocol}//${window.location.host}/proxy-ws/notifications/${data.ticket}`);
   socket.onmessage = event => {
     try {
-      const payload = JSON.parse(event.data) as { event: string };
+      const payload = JSON.parse(event.data) as { event: string; data?: { type?: string; content?: string } };
+      if (payload.event === 'account_disabled' || payload.data?.type === 'ACCOUNT_DISABLED') {
+        handleAccountDisabled(payload.data?.content);
+        return;
+      }
       if (payload.event === 'notification' || payload.event.startsWith('read')) loadNotifications();
     } catch {
       loadNotifications();
