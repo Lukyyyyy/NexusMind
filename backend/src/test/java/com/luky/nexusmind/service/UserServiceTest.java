@@ -4,12 +4,17 @@ import com.luky.nexusmind.exception.CustomException;
 import com.luky.nexusmind.model.OrganizationTag;
 import com.luky.nexusmind.model.User;
 import com.luky.nexusmind.repository.OrganizationTagRepository;
+import com.luky.nexusmind.repository.FileUploadRepository;
+import com.luky.nexusmind.repository.OrganizationJoinRequestRepository;
+import com.luky.nexusmind.repository.OrganizationMembershipRepository;
 import com.luky.nexusmind.repository.UserRepository;
 import com.luky.nexusmind.utils.PasswordUtil;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
 import org.springframework.test.util.ReflectionTestUtils;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.Query;
 
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Proxy;
@@ -47,6 +52,55 @@ class UserServiceTest {
         ReflectionTestUtils.setField(userService, "organizationTagRepository", organizationTags.proxy());
         ReflectionTestUtils.setField(userService, "orgTagCacheService", cache);
         ReflectionTestUtils.setField(userService, "emailVerificationService", emailVerificationService);
+    }
+
+    @Test
+    void organizationTagIdCanBeRenamedWhenItHasNoDocuments() {
+        User admin = new User();
+        admin.setUsername("adminuser");
+        admin.setRole(User.Role.ADMIN);
+        OrganizationTag original = existingTag("cv", "计算机视觉");
+        original.setCreatedBy(admin);
+
+        UserRepository userRepository = proxy(UserRepository.class, (proxy, method, args) -> switch (method.getName()) {
+            case "findByUsername" -> Optional.of(admin);
+            case "findAll" -> List.of();
+            case "save" -> args[0];
+            default -> defaultValue(method.getReturnType());
+        });
+        OrganizationTagRepository tagRepository = proxy(OrganizationTagRepository.class, (proxy, method, args) -> switch (method.getName()) {
+            case "findByTagId" -> Optional.of(original);
+            case "save", "saveAndFlush" -> args[0];
+            case "findByParentTag", "saveAll" -> List.of();
+            default -> defaultValue(method.getReturnType());
+        });
+        OrganizationMembershipRepository membershipRepository = proxy(OrganizationMembershipRepository.class,
+                (proxy, method, args) -> method.getName().equals("findByOrganizationTagId")
+                        ? List.of() : defaultValue(method.getReturnType()));
+        OrganizationJoinRequestRepository requestRepository = proxy(OrganizationJoinRequestRepository.class,
+                (proxy, method, args) -> method.getName().equals("findByOrganizationTagId")
+                        ? List.of() : defaultValue(method.getReturnType()));
+        FileUploadRepository uploads = proxy(FileUploadRepository.class,
+                (proxy, method, args) -> defaultValue(method.getReturnType()));
+        Query query = proxy(Query.class, (proxy, method, args) -> method.getName().equals("setParameter")
+                ? proxy : defaultValue(method.getReturnType()));
+        EntityManager entityManager = proxy(EntityManager.class,
+                (proxy, method, args) -> method.getName().equals("createQuery") ? query : defaultValue(method.getReturnType()));
+
+        UserService service = new UserService();
+        ReflectionTestUtils.setField(service, "userRepository", userRepository);
+        ReflectionTestUtils.setField(service, "organizationTagRepository", tagRepository);
+        ReflectionTestUtils.setField(service, "organizationMembershipRepository", membershipRepository);
+        ReflectionTestUtils.setField(service, "organizationJoinRequestRepository", requestRepository);
+        ReflectionTestUtils.setField(service, "fileUploadRepository", uploads);
+        ReflectionTestUtils.setField(service, "orgTagCacheService", cache);
+        ReflectionTestUtils.setField(service, "entityManager", entityManager);
+
+        OrganizationTag renamed = service.updateOrganizationTag(
+                "cv", "computer vision", original.getName(), original.getDescription(), null, "adminuser");
+
+        assertEquals("computer vision", renamed.getTagId());
+        assertTrue(cache.invalidateAll);
     }
 
     /**
@@ -240,6 +294,7 @@ class UserServiceTest {
         private final Map<String, List<String>> cachedOrgTags = new HashMap<>();
         private final Map<String, String> cachedPrimaryOrg = new HashMap<>();
         private final List<String> invalidatedEffectiveTags = new ArrayList<>();
+        private boolean invalidateAll;
 
         @Override
         public void cacheUserOrgTags(String username, List<String> orgTags) {
@@ -269,6 +324,11 @@ class UserServiceTest {
         @Override
         public void deleteUserEffectiveTagsCache(String username) {
             invalidatedEffectiveTags.add(username);
+        }
+
+        @Override
+        public void invalidateAllEffectiveTagsCache() {
+            invalidateAll = true;
         }
     }
 
@@ -374,7 +434,10 @@ class UserServiceTest {
         if (returnType.equals(boolean.class)) {
             return false;
         }
-        if (returnType.equals(long.class) || returnType.equals(int.class)) {
+        if (returnType.equals(long.class)) {
+            return 0L;
+        }
+        if (returnType.equals(int.class)) {
             return 0;
         }
         if (returnType.equals(void.class)) {

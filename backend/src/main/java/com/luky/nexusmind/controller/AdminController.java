@@ -303,7 +303,8 @@ public class AdminController {
         
         try {
             OrganizationTag updatedTag = userService.updateOrganizationTag(
-                tagId, 
+                tagId,
+                request.tagId(),
                 request.name(), 
                 request.description(), 
                 request.parentTag(), 
@@ -473,4 +474,4 @@ record OrgTagRequest(String tagId, String name, String description, String paren
 record AssignOrgTagsRequest(List<String> orgTags) {}
 
 // 添加组织标签更新请求记录类
-record OrgTagUpdateRequest(String name, String description, String parentTag) {}
+record OrgTagUpdateRequest(String tagId, String name, String description, String parentTag) {}

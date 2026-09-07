@@ -16,6 +16,7 @@ const emit = defineEmits<{ submitted: [] }>();
 
 const visible = defineModel<boolean>('visible', { default: false });
 const loading = ref(false);
+const originalTagId = ref('');
 const { formRef, validate, restoreValidation } = useNaiveForm();
 const { defaultRequiredRule } = useFormRules();
 
@@ -46,7 +47,7 @@ const rules = ref<FormRules>({
       validator(_, value) {
         return !value.startsWith('PRIVATE_');
       },
-      message: '标签Id不能以PRIVATE_开头',
+      message: '标签ID不能以PRIVATE_开头',
       trigger: 'blur'
     }
   ],
@@ -57,7 +58,10 @@ const rules = ref<FormRules>({
 async function handleUpdateModelWhenEdit() {
   model.value = createDefaultModel();
 
-  if (props.operateType === 'edit') model.value = props.rowData;
+  if (props.operateType === 'edit') {
+    originalTagId.value = props.rowData.tagId;
+    model.value = { ...props.rowData };
+  }
   else if (props.operateType === 'addChild') model.value.parentTag = props.rowData.tagId!;
 }
 
@@ -70,7 +74,7 @@ async function handleSubmit() {
   loading.value = true;
   let res: FlatResponseData;
   if (props.operateType === 'edit')
-    res = await request({ url: `/admin/org-tags/${model.value.tagId}`, method: 'PUT', data: model.value });
+    res = await request({ url: `/admin/org-tags/${originalTagId.value}`, method: 'PUT', data: model.value });
   else res = await request({ url: '/admin/org-tags', method: 'POST', data: model.value });
   if (!res.error) {
     window.$message?.success('操作成功');
@@ -99,8 +103,8 @@ watch(visible, () => {
     @positive-click="handleSubmit"
   >
     <NForm ref="formRef" :model="model" :rules="rules" label-placement="left" :label-width="100" mt-10>
-      <NFormItem label="标签Id" path="tagId">
-        <NInput v-model:value="model.tagId" placeholder="请输入标签Id" maxlength="60" />
+      <NFormItem label="标签ID" path="tagId">
+        <NInput v-model:value="model.tagId" placeholder="请输入标签ID" maxlength="60" />
       </NFormItem>
       <NFormItem label="标签名称" path="name">
         <NInput v-model:value="model.name" placeholder="请输入标签名称" maxlength="60" />

@@ -17,6 +17,7 @@ public interface OrganizationJoinRequestRepository extends JpaRepository<Organiz
     Page<OrganizationJoinRequest> findByStatusOrderByCreatedAtAsc(OrganizationJoinRequest.Status status, Pageable pageable);
     Page<OrganizationJoinRequest> findAllByOrderByCreatedAtDesc(Pageable pageable);
     List<OrganizationJoinRequest> findByOrganizationTagIdAndStatus(String tagId, OrganizationJoinRequest.Status status);
+    List<OrganizationJoinRequest> findByOrganizationTagId(String tagId);
     long countByStatus(OrganizationJoinRequest.Status status);
     long countByUserIdAndCreatedAtAfter(Long userId, LocalDateTime after);
     boolean existsByOrganizationTagId(String tagId);

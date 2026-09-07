@@ -3,6 +3,7 @@ package com.luky.nexusmind.service;
 import com.luky.nexusmind.exception.CustomException;
 import com.luky.nexusmind.model.OrganizationTag;
 import com.luky.nexusmind.model.OrganizationMembership;
+import com.luky.nexusmind.model.OrganizationJoinRequest;
 import com.luky.nexusmind.model.User;
 import com.luky.nexusmind.repository.OrganizationTagRepository;
 import com.luky.nexusmind.repository.UserRepository;
@@ -22,6 +23,8 @@ import org.springframework.data.domain.PageImpl;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
 
 import java.security.SecureRandom;
 import java.time.LocalDateTime;
@@ -79,6 +82,9 @@ public class UserService {
 
     @Autowired
     private FileUploadRepository fileUploadRepository;
+
+    @PersistenceContext
+    private EntityManager entityManager;
 
     @Autowired
     private EmailVerificationService emailVerificationService;
@@ -382,6 +388,7 @@ public class UserService {
     @Transactional
     public OrganizationTag createOrganizationTag(String tagId, String name, String description, 
                                                 String parentTag, String creatorUsername) {
+        tagId = validateOrganizationTagId(tagId);
         // 验证创建者是否为管理员
         User creator = userRepository.findByUsername(creatorUsername)
                 .orElseThrow(() -> new CustomException("创建者不存在", HttpStatus.NOT_FOUND));
@@ -736,7 +743,7 @@ public class UserService {
      * @return 更新后的组织标签
      */
     @Transactional
-    public OrganizationTag updateOrganizationTag(String tagId, String name, String description, 
+    public OrganizationTag updateOrganizationTag(String tagId, String newTagId, String name, String description,
                                                 String parentTag, String adminUsername) {
         // 验证操作者是否为管理员
         User admin = userRepository.findByUsername(adminUsername)
@@ -751,6 +758,15 @@ public class UserService {
                 .orElseThrow(() -> new CustomException("组织标签不存在", HttpStatus.NOT_FOUND));
         if (DEFAULT_ORG_TAG.equals(tagId) || "admin".equals(tagId) || tagId.startsWith(PRIVATE_TAG_PREFIX)) {
             throw new CustomException("系统组织不可编辑", HttpStatus.FORBIDDEN);
+        }
+        String normalizedTagId = newTagId == null ? tagId : validateOrganizationTagId(newTagId);
+        boolean rename = !tagId.equals(normalizedTagId);
+        if (rename && organizationTagRepository.existsByTagId(normalizedTagId)) {
+            throw new CustomException("组织标签 ID 已存在", HttpStatus.CONFLICT);
+        }
+        // ponytail: 文档权限还写入 ES/Neo4j；只有完成跨存储迁移后才放开有文档组织的 ID 修改。
+        if (rename && fileUploadRepository.countByOrgTag(tagId) > 0) {
+            throw new CustomException("该组织已有文档，暂不能修改标签ID", HttpStatus.CONFLICT);
         }
         String normalizedParent = emptyToNull(parentTag);
         if (!Objects.equals(tag.getParentTag(), normalizedParent)
@@ -767,7 +783,7 @@ public class UserService {
         // 如果指定了父标签，检查父标签是否存在
         if (parentTag != null && !parentTag.isEmpty()) {
             // 检查是否为自身
-            if (tagId.equals(parentTag)) {
+            if (tagId.equals(parentTag) || normalizedTagId.equals(parentTag)) {
                 throw new CustomException("组织标签不能以自身作为父级", HttpStatus.BAD_REQUEST);
             }
             
@@ -781,6 +797,50 @@ public class UserService {
             }
         }
         
+        if (rename) {
+            OrganizationTag replacement = new OrganizationTag();
+            replacement.setTagId(normalizedTagId);
+            replacement.setName(tag.getName());
+            replacement.setDescription(tag.getDescription());
+            replacement.setParentTag(tag.getParentTag());
+            replacement.setJoinable(tag.isJoinable());
+            replacement.setArchivedAt(tag.getArchivedAt());
+            replacement.setArchiveReason(tag.getArchiveReason());
+            replacement.setCreatedBy(tag.getCreatedBy());
+            replacement.setCreatedAt(tag.getCreatedAt());
+            replacement.setUpdatedAt(tag.getUpdatedAt());
+            replacement = organizationTagRepository.saveAndFlush(replacement);
+
+            List<OrganizationTag> children = organizationTagRepository.findByParentTag(tagId);
+            children.forEach(child -> child.setParentTag(normalizedTagId));
+            organizationTagRepository.saveAll(children);
+
+            List<OrganizationMembership> memberships = organizationMembershipRepository.findByOrganizationTagId(tagId);
+            OrganizationTag renamedTag = replacement;
+            memberships.forEach(membership -> membership.setOrganization(renamedTag));
+            organizationMembershipRepository.saveAll(memberships);
+
+            List<OrganizationJoinRequest> requests = organizationJoinRequestRepository.findByOrganizationTagId(tagId);
+            requests.forEach(request -> request.setOrganization(renamedTag));
+            organizationJoinRequestRepository.saveAll(requests);
+
+            for (User user : userRepository.findAll()) {
+                List<String> orgTags = parseOrgTags(user.getOrgTags());
+                boolean changed = orgTags.contains(tagId);
+                orgTags.replaceAll(value -> value.equals(tagId) ? normalizedTagId : value);
+                if (changed || tagId.equals(user.getPrimaryOrg())) {
+                    user.setOrgTags(String.join(",", orgTags));
+                    if (tagId.equals(user.getPrimaryOrg())) user.setPrimaryOrg(normalizedTagId);
+                    userRepository.save(user);
+                    orgTagCacheService.deleteUserOrgTagsCache(user.getUsername());
+                }
+            }
+            entityManager.createQuery("update AuditEvent event set event.targetOrgTag = :newId where event.targetOrgTag = :oldId")
+                    .setParameter("newId", normalizedTagId).setParameter("oldId", tagId).executeUpdate();
+            organizationTagRepository.delete(tag);
+            tag = replacement;
+        }
+
         // 更新标签
         if (name != null && !name.isEmpty()) {
             tag.setName(name.trim());
@@ -798,6 +858,18 @@ public class UserService {
         orgTagCacheService.invalidateAllEffectiveTagsCache();
         
         return updatedTag;
+    }
+
+    private String validateOrganizationTagId(String tagId) {
+        String value = tagId == null ? "" : tagId.trim();
+        if (value.isEmpty() || value.length() > 60 || value.codePoints().anyMatch(Character::isISOControl)
+                || value.matches(".*[/\\\\?#].*")) {
+            throw new CustomException("标签ID需为1-60个字符，且不能包含 /\\?# 或控制字符", HttpStatus.BAD_REQUEST);
+        }
+        if (value.startsWith(PRIVATE_TAG_PREFIX)) {
+            throw new CustomException("标签ID不能以PRIVATE_开头", HttpStatus.BAD_REQUEST);
+        }
+        return value;
     }
     
     /**
