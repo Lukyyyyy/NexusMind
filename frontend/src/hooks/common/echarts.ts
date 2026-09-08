@@ -131,17 +131,17 @@ export function useEcharts<T extends ECOption>(optionsFactory: () => T, hooks: C
    * @param callback callback function
    */
   async function updateOptions(callback: (opts: T, optsFactory: () => T) => ECOption = () => chartOptions) {
-    if (!isRendered()) return;
-
     const updatedOpts = callback(chartOptions, optionsFactory);
 
     Object.assign(chartOptions, updatedOpts);
+
+    if (!isRendered()) return;
 
     if (isRendered()) {
       chart?.clear();
     }
 
-    chart?.setOption({ ...updatedOpts, backgroundColor: 'transparent' });
+    chart?.setOption({ ...chartOptions, backgroundColor: 'transparent' });
 
     await onUpdated?.(chart!);
   }
