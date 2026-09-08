@@ -31,6 +31,8 @@ const remainingColor = computed(() => {
 });
 const userOptions = computed(() => allUsers.value.map(v => ({ label: v.displayName || v.username, value: v.userId })));
 const modelOptions = computed(() => (data.value?.pricingRules || []).map(v => ({ label: v.modelName, value: v.modelName })));
+const hasTrendData = computed(() => data.value?.trend.some(v => v.amount > 0));
+const hasModelData = computed(() => data.value?.byModel.some(v => v.amount > 0));
 
 const trendSeries = {
   type: 'line' as const,
@@ -142,8 +144,14 @@ onMounted(load);
     </NCard>
 
     <div class="grid grid-cols-1 gap-16px xl:grid-cols-2">
-      <NCard title="每日消费趋势" :bordered="false" size="small" class="card-wrapper"><div ref="trendRef" class="h-280px" /></NCard>
-      <NCard title="模型消费分布" :bordered="false" size="small" class="card-wrapper"><div ref="modelRef" class="h-280px" /></NCard>
+      <NCard title="每日消费趋势" :bordered="false" size="small" class="card-wrapper">
+        <div v-if="hasTrendData" ref="trendRef" class="h-280px" />
+        <NEmpty v-else description="无数据" class="h-280px justify-center" />
+      </NCard>
+      <NCard title="模型消费分布" :bordered="false" size="small" class="card-wrapper">
+        <div v-if="hasModelData" ref="modelRef" class="h-280px" />
+        <NEmpty v-else description="无数据" class="h-280px justify-center" />
+      </NCard>
     </div>
     <NCard v-if="data?.superAdmin" title="用户额度" :bordered="false" size="small" class="card-wrapper">
       <NDataTable :columns="userColumns" :data="data?.users || []" :loading="loading" :scroll-x="900" />
