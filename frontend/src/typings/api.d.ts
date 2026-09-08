@@ -341,6 +341,39 @@ declare namespace Api {
     }
   }
 
+  namespace ModelUsage {
+    interface OverviewParams {
+      month?: string;
+      userId?: number;
+      modelName?: string;
+    }
+    interface ChartPoint { label: string; amount: number }
+    interface UserSummary {
+      userId: number; username: string; displayName: string; quota: number; spent: number; remaining: number; monthlyReset: boolean;
+    }
+    interface UsageItem {
+      time: string; userId: number; username: string; modelName: string; modelType: ModelConfig.ModelType; scenario: string;
+      inputTokens: number; cacheHitTokens: number; outputTokens: number;
+      inputPrice: number; cacheHitPrice: number; outputPrice: number; amount: number;
+    }
+    interface PricingItem {
+      id: number; modelName: string; modelType: ModelConfig.ModelType; enabled: boolean;
+      inputPrice: number; cacheHitPrice: number; outputPrice: number;
+      offPeakInputPrice: number | null; offPeakCacheHitPrice: number | null; offPeakOutputPrice: number | null;
+    }
+    interface Overview {
+      superAdmin: boolean; month: string; totalQuota: number; totalSpent: number; totalRemaining: number;
+      trend: ChartPoint[]; byModel: ChartPoint[]; users: UserSummary[]; records: UsageItem[]; pricingRules: PricingItem[];
+    }
+    interface QuotaRequest { monthlyLimit: number; monthlyReset: boolean; currentPassword: string; reason: string }
+    interface PricingRequest {
+      enabled: boolean; inputPrice: number; cacheHitPrice: number; outputPrice: number;
+      offPeakInputPrice: number | null; offPeakCacheHitPrice: number | null; offPeakOutputPrice: number | null;
+      currentPassword: string; reason: string;
+    }
+    interface CreatePricingRequest extends PricingRequest { modelName: string; modelType: ModelConfig.ModelType }
+  }
+
   namespace KnowledgeBase {
     interface SearchParams {
       query: string;

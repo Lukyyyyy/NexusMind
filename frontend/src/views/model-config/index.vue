@@ -3,12 +3,16 @@ import type { DataTableColumns, FormInst, FormRules } from 'naive-ui';
 import { NButton, NPopconfirm, NSpace, NTag, NTooltip } from 'naive-ui';
 import {
   createModelConfig,
+  createModelPricing,
   deleteModelConfig,
   fetchModelConfigOverview,
+  fetchModelUsageOverview,
   updateModelConfig,
+  updateModelPricing,
   updateModelPreference
 } from '@/service/api';
 import SvgIcon from '@/components/custom/svg-icon.vue';
+import ModelUsagePanel from './modules/model-usage-panel.vue';
 
 const loading = ref(false);
 const saving = ref(false);
@@ -16,6 +20,23 @@ const modalVisible = ref(false);
 const editingId = ref<number | null>(null);
 const formRef = ref<FormInst | null>(null);
 const overview = ref<Api.ModelConfig.Overview | null>(null);
+const pricingEnabled = ref(new Set<string>());
+const pricingRules = ref(new Map<string, Api.ModelUsage.PricingItem>());
+const isSuperAdmin = ref(false);
+const pricingVisible = ref(false);
+const pricingTarget = ref<Api.ModelConfig.Item | null>(null);
+const editingPricingRule = ref<Api.ModelUsage.PricingItem | null>(null);
+const priceForm = reactive<Api.ModelUsage.PricingRequest>({
+  enabled: true,
+  inputPrice: 0,
+  cacheHitPrice: 0,
+  outputPrice: 0,
+  offPeakInputPrice: null,
+  offPeakCacheHitPrice: null,
+  offPeakOutputPrice: null,
+  currentPassword: '',
+  reason: ''
+});
 const selectedLlmConfigId = ref<number | null>(null);
 const selectedEmbeddingConfigId = ref<number | null>(null);
 const selectedGraphExtractionConfigId = ref<number | null>(null);
@@ -23,6 +44,12 @@ const selectedRerankConfigId = ref<number | null>(null);
 const activeTab = ref<Api.ModelConfig.ModelType>('LLM');
 const rerankWindowMin = ref(10);
 const rerankWindowMax = ref(30);
+const route = useRoute();
+const router = useRouter();
+const pageTab = computed<'config' | 'usage'>({
+  get: () => (route.query.tab === 'usage' ? 'usage' : 'config'),
+  set: tab => router.replace({ query: { ...route.query, tab: tab === 'usage' ? tab : undefined } })
+});
 
 const emptyForm = (): Api.ModelConfig.Request => ({
   ownerType: 'USER',
@@ -56,17 +83,17 @@ const rerankConfigs = computed(() => configs.value.filter(item => item.modelType
 const selectableLlmOptions = computed(() =>
   llmConfigs.value
     .filter(item => item.enabled)
-    .map(item => ({ label: optionLabel(item), value: item.id }))
+    .map(item => selectableOption(item))
 );
 const selectableEmbeddingOptions = computed(() =>
   embeddingConfigs.value
     .filter(item => item.enabled)
-    .map(item => ({ label: optionLabel(item), value: item.id }))
+    .map(item => selectableOption(item))
 );
 const selectableRerankOptions = computed(() =>
   rerankConfigs.value
     .filter(item => item.enabled)
-    .map(item => ({ label: optionLabel(item), value: item.id }))
+    .map(item => selectableOption(item))
 );
 const tabMeta: Record<Api.ModelConfig.ModelType, { tab: string; add: string }> = {
   LLM: { tab: 'LLM', add: '新增 LLM' },
@@ -148,11 +175,12 @@ const columns: DataTableColumns<Api.ModelConfig.Item> = [
   {
     key: 'status',
     title: '状态',
-    width: 130,
+    width: 240,
     render: row => (
       <NSpace size={6}>
         <NTag type={row.enabled ? 'success' : 'warning'}>{row.enabled ? '启用' : '停用'}</NTag>
         {row.defaultModel ? <NTag type="primary">默认</NTag> : null}
+        {row.ownerType === 'SYSTEM' && !pricingEnabled.value.has(row.modelName) ? <NTag type="error">未启用计价规则</NTag> : null}
       </NSpace>
     )
   },
@@ -171,10 +199,15 @@ const columns: DataTableColumns<Api.ModelConfig.Item> = [
   {
     key: 'operate',
     title: '操作',
-    width: 160,
+    width: 250,
     fixed: 'right',
     render: row => (
       <NSpace size={8}>
+        {isSuperAdmin.value && row.ownerType === 'SYSTEM' && !pricingEnabled.value.has(row.modelName) ? (
+          <NButton size="small" type="warning" ghost onClick={() => openPricing(row)}>
+            配置计价
+          </NButton>
+        ) : null}
         {canManage(row) ? (
           <NButton size="small" type="primary" ghost onClick={() => openEdit(row)}>
             编辑
@@ -201,6 +234,11 @@ function optionLabel(item: Api.ModelConfig.Item) {
   return `${item.name} (${item.modelName})`;
 }
 
+function selectableOption(item: Api.ModelConfig.Item) {
+  const unpriced = item.ownerType === 'SYSTEM' && !pricingEnabled.value.has(item.modelName);
+  return { label: `${optionLabel(item)}${unpriced ? ' · 未启用计价规则' : ''}`, value: item.id, disabled: unpriced };
+}
+
 function ownerLabel(item: Api.ModelConfig.Item) {
   return item.ownerType === 'SYSTEM' ? '系统' : '我的';
 }
@@ -218,9 +256,49 @@ function handleCopyBaseUrl(baseUrl: string) {
   window.$message?.success('Base URL 已复制');
 }
 
+function resetPriceForm(rule?: Api.ModelUsage.PricingItem) {
+  Object.assign(priceForm, {
+    enabled: true,
+    inputPrice: 0,
+    cacheHitPrice: 0,
+    outputPrice: 0,
+    offPeakInputPrice: null,
+    offPeakCacheHitPrice: null,
+    offPeakOutputPrice: null,
+    ...rule,
+    currentPassword: '',
+    reason: ''
+  });
+}
+
+function openPricing(row: Api.ModelConfig.Item) {
+  pricingTarget.value = row;
+  editingPricingRule.value = pricingRules.value.get(row.modelName) || null;
+  resetPriceForm(editingPricingRule.value || undefined);
+  pricingVisible.value = true;
+}
+
+async function savePricing() {
+  if (!pricingTarget.value || !priceForm.currentPassword || !priceForm.reason.trim()) {
+    window.$message?.warning('请填写当前密码和操作原因');
+    return;
+  }
+  saving.value = true;
+  const payload = { ...priceForm };
+  const { error } = editingPricingRule.value
+    ? await updateModelPricing(editingPricingRule.value.id, payload)
+    : await createModelPricing({ ...payload, modelName: pricingTarget.value.modelName, modelType: pricingTarget.value.modelType });
+  if (!error) {
+    pricingVisible.value = false;
+    window.$message?.success(editingPricingRule.value ? '计价规则已更新' : '计价规则已创建');
+    await loadData();
+  }
+  saving.value = false;
+}
+
 async function loadData() {
   loading.value = true;
-  const { data, error } = await fetchModelConfigOverview();
+  const [{ data, error }, usage] = await Promise.all([fetchModelConfigOverview(), fetchModelUsageOverview()]);
   if (!error) {
     overview.value = data;
     selectedLlmConfigId.value = data.selectedLlmConfigId;
@@ -229,6 +307,11 @@ async function loadData() {
     selectedRerankConfigId.value = data.selectedRerankConfigId;
     rerankWindowMin.value = data.rerankWindowMin ?? 10;
     rerankWindowMax.value = data.rerankWindowMax ?? 30;
+  }
+  if (!usage.error) {
+    isSuperAdmin.value = usage.data.superAdmin;
+    pricingRules.value = new Map(usage.data.pricingRules.map(item => [item.modelName, item]));
+    pricingEnabled.value = new Set(usage.data.pricingRules.filter(item => item.enabled).map(item => item.modelName));
   }
   loading.value = false;
 }
@@ -349,7 +432,10 @@ onMounted(loadData);
 
 <template>
   <div class="min-h-500px flex-col-stretch gap-16px overflow-y-auto">
-    <NCard title="当前使用" :bordered="false" size="small" class="card-wrapper">
+    <NTabs v-model:value="pageTab" type="line" animated>
+      <NTabPane name="config" tab="模型配置">
+        <div class="flex-col-stretch gap-16px">
+          <NCard title="当前使用" :bordered="false" size="small" class="card-wrapper">
       <div class="grid grid-cols-1 gap-16px md:grid-cols-2 xl:grid-cols-[repeat(4,minmax(0,1fr))_auto] xl:items-end">
         <div>
           <div class="mb-6px text-14px font-medium lh-22px">LLM</div>
@@ -385,9 +471,9 @@ onMounted(loadData);
           <NButton type="primary" :loading="saving" @click="savePreference">保存</NButton>
         </div>
       </div>
-    </NCard>
+          </NCard>
 
-    <NCard title="模型配置" :bordered="false" size="small" class="card-wrapper">
+          <NCard title="模型配置" :bordered="false" size="small" class="card-wrapper">
       <template #header-extra>
         <NButton type="primary" size="small" @click="openCreate(activeTab)">
           {{ tabMeta[activeTab].add }}
@@ -428,9 +514,22 @@ onMounted(loadData);
           />
         </NTabPane>
       </NTabs>
-    </NCard>
+          </NCard>
+        </div>
+      </NTabPane>
+      <NTabPane name="usage" tab="模型额度" display-directive="if">
+        <ModelUsagePanel />
+      </NTabPane>
+    </NTabs>
 
-    <NModal v-model:show="modalVisible" preset="card" :title="editingId ? '编辑模型配置' : '新增模型配置'" class="max-w-720px">
+    <NModal
+      v-model:show="modalVisible"
+      preset="card"
+      :title="editingId ? '编辑模型配置' : '新增模型配置'"
+      class="max-w-720px"
+      :style="{ maxHeight: 'calc(100vh - 32px)' }"
+      content-style="overflow-y: auto"
+    >
       <NForm ref="formRef" :model="formModel" :rules="rules" label-placement="top">
         <div class="grid grid-cols-1 gap-x-16px md:grid-cols-2">
           <NFormItem label="配置名称" path="name">
@@ -678,6 +777,29 @@ onMounted(loadData);
           <NButton type="primary" :disabled="rerankWindowInvalid" :loading="saving" @click="handleSubmit">
             保存
           </NButton>
+        </div>
+      </template>
+    </NModal>
+
+    <NModal v-model:show="pricingVisible" preset="card" :title="editingPricingRule ? '编辑计价规则' : '创建计价规则'" class="max-w-620px">
+      <NForm label-placement="top">
+        <NAlert type="info" class="mb-16px">{{ pricingTarget?.name }}（{{ pricingTarget?.modelName }}）</NAlert>
+        <NFormItem label="启用计价"><NSwitch v-model:value="priceForm.enabled" /></NFormItem>
+        <div class="grid grid-cols-1 gap-x-12px md:grid-cols-3">
+          <NFormItem label="输入单价"><NInputNumber v-model:value="priceForm.inputPrice" :min="0" :precision="2" class="w-full" /></NFormItem>
+          <NFormItem label="缓存命中"><NInputNumber v-model:value="priceForm.cacheHitPrice" :min="0" :precision="2" class="w-full" /></NFormItem>
+          <NFormItem label="输出单价"><NInputNumber v-model:value="priceForm.outputPrice" :min="0" :precision="2" class="w-full" /></NFormItem>
+          <NFormItem label="闲时输入（可选）"><NInputNumber v-model:value="priceForm.offPeakInputPrice" :min="0" :precision="2" clearable class="w-full" /></NFormItem>
+          <NFormItem label="闲时缓存（可选）"><NInputNumber v-model:value="priceForm.offPeakCacheHitPrice" :min="0" :precision="2" clearable class="w-full" /></NFormItem>
+          <NFormItem label="闲时输出（可选）"><NInputNumber v-model:value="priceForm.offPeakOutputPrice" :min="0" :precision="2" clearable class="w-full" /></NFormItem>
+        </div>
+        <NFormItem label="操作原因"><NInput v-model:value="priceForm.reason" maxlength="300" /></NFormItem>
+        <NFormItem label="当前密码"><NInput v-model:value="priceForm.currentPassword" type="password" show-password-on="click" /></NFormItem>
+      </NForm>
+      <template #footer>
+        <div class="flex justify-end gap-12px">
+          <NButton @click="pricingVisible = false">取消</NButton>
+          <NButton type="primary" :loading="saving" @click="savePricing">保存</NButton>
         </div>
       </template>
     </NModal>
