@@ -388,7 +388,7 @@ public class AdminController {
         }
     }
     
-    /** 管理员查询数据库中的对话历史。 */
+    /** 超级管理员查询数据库中的对话历史。 */
     @GetMapping("/conversation")
     public ResponseEntity<?> getAllConversations(
             @RequestHeader("Authorization") String token,
@@ -400,7 +400,10 @@ public class AdminController {
         String adminUsername = null;
         try {
             adminUsername = jwtUtils.extractUsernameFromToken(token.replace("Bearer ", ""));
-            validateAdmin(adminUsername);
+            User admin = validateAdmin(adminUsername);
+            if (admin.getRole() != User.Role.SUPER_ADMIN) {
+                throw new CustomException("无权访问：需要超级管理员权限", HttpStatus.FORBIDDEN);
+            }
             
             LogUtils.logBusiness("ADMIN_GET_ALL_CONVERSATIONS", adminUsername, "管理员开始查询对话历史，目标用户ID: %s, 时间范围: %s 到 %s", userid, start_date, end_date);
             

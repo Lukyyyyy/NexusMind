@@ -43,7 +43,7 @@ watchEffect(() => {
 async function getList() {
   if (!params.value.userid) return;
   loading.value = true;
-  const { error, data } = store.isAdmin
+  const { error, data } = store.isSuperAdmin
     ? await request<Api.Chat.Message[]>({
         url: 'admin/conversation',
         params: params.value
@@ -73,11 +73,11 @@ async function getList() {
     <Teleport defer to="#header-extra">
       <div class="px-10">
         <NForm :model="params" label-placement="left" :show-feedback="false" inline>
-          <NFormItem v-if="store.isAdmin" label="用户">
+          <NFormItem v-if="store.isSuperAdmin" label="用户">
             <TheSelect
               v-model:value="userId"
               url="admin/users/list"
-              :params="{ page: 1, size: 999, orgTag: store.userInfo.primaryOrg }"
+              :params="{ page: 1, size: 999 }"
               key-field="content"
               value-field="userId"
               label-field="username"
