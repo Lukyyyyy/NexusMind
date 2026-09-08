@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.luky.nexusmind.service.AiTraceService;
 import com.luky.nexusmind.service.ModelConfigService;
+import com.luky.nexusmind.service.ModelUsageService;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -33,6 +35,7 @@ public class RerankClient {
 
     private final ObjectMapper objectMapper;
     private final AiTraceService aiTraceService;
+    private ModelUsageService modelUsageService;
 
     @Value("${ai.retrieval.rerank-timeout-ms:8000}")
     private long timeoutMs;
@@ -42,6 +45,9 @@ public class RerankClient {
         this.objectMapper = objectMapper;
         this.aiTraceService = aiTraceService;
     }
+
+    @Autowired
+    void setModelUsageService(ModelUsageService modelUsageService) { this.modelUsageService = modelUsageService; }
 
     /**
      * 对候选文档重排。模型配置与候选窗口由调用方（HybridSearchService）解析决定。
@@ -56,16 +62,26 @@ public class RerankClient {
         }
         AiTraceService.TraceSpan span = aiTraceService.startSpan("rag.rerank", userId, null, null);
         long start = System.currentTimeMillis();
+        Map<String, Object> request = buildRequestBody(query, documents, config);
+        ModelUsageService.Reservation reservation = modelUsageService == null
+                ? new ModelUsageService.Reservation(null, 0, 0, true)
+                : modelUsageService.reserve(config, userId, "rag.rerank", request, 0);
         span.attribute("gen_ai.request.model", config.modelName())
                 .attribute("nexusmind.rerank.doc_count", documents.size())
                 .attribute("nexusmind.model.config.id", config.id() != null ? config.id() : -1);
         try {
             logger.debug("调用 rerank API, 模型: {}, 文档数: {}", config.modelName(), documents.size());
-            double[] scores = parseScores(callApi(query, documents, config), documents.size());
+            String response = callApi(request, config);
+            double[] scores = parseScores(response, documents.size());
+            JsonNode usage = objectMapper.readTree(response).path("usage");
+            if (usage.isMissingNode()) usage = objectMapper.readTree(response).path("output").path("usage");
+            long tokens = usage.path("input_tokens").asLong(usage.path("total_tokens").asLong(reservation.estimatedInputTokens()));
+            if (modelUsageService != null) modelUsageService.settle(reservation, tokens, 0, 0);
             span.attribute("nexusmind.rerank.took_ms", System.currentTimeMillis() - start);
             span.end();
             return scores;
         } catch (WebClientResponseException e) {
+            if (modelUsageService != null) modelUsageService.release(reservation);
             // HTTP 层错误（如鉴权失败、参数不合法）标记 ERROR，便于发现配置问题
             logger.warn("rerank 调用失败(HTTP {})，保持融合排序: {}", e.getStatusCode(),
                     abbreviate(e.getResponseBodyAsString(), 300));
@@ -74,6 +90,7 @@ public class RerankClient {
             span.end();
             return null;
         } catch (Exception e) {
+            if (modelUsageService != null) modelUsageService.release(reservation);
             // 超时等瞬时故障属于设计内降级：不标记 ERROR，避免污染整条 trace 的状态
             logger.warn("rerank 调用超时或失败，保持融合排序: {}", e.getMessage());
             span.attribute("nexusmind.rerank.degraded", true)
@@ -85,10 +102,10 @@ public class RerankClient {
         }
     }
 
-    private String callApi(String query, List<String> documents, ModelConfigService.ResolvedModelConfig config) {
+    private String callApi(Map<String, Object> request, ModelConfigService.ResolvedModelConfig config) {
         return buildWebClient(config).post()
                 .uri(ModelConfigService.RERANK_ENDPOINT_PATH)
-                .bodyValue(buildRequestBody(query, documents, config))
+                .bodyValue(request)
                 .retrieve()
                 .bodyToMono(String.class)
                 .block(Duration.ofMillis(timeoutMs));

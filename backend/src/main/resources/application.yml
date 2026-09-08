@@ -159,7 +159,7 @@ file:
 elasticsearch:
   host: localhost       # Elasticsearch主机地址
   port: 9200            # Elasticsearch端口号
-  scheme: https         # 协议（http/https）
+  scheme: ${ELASTICSEARCH_SCHEME:http} # 本地 Elasticsearch 默认使用 HTTP
   username: elastic     # 安装后生成的默认用户
   password: ${ELASTICSEARCH_PASSWORD:}
 

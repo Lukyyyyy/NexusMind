@@ -21,6 +21,8 @@ public interface AiModelConfigRepository extends JpaRepository<AiModelConfig, Lo
 
     List<AiModelConfig> findByOwnerTypeAndModelType(AiModelOwnerType ownerType, AiModelType modelType);
 
+    boolean existsByOwnerTypeAndModelNameAndModelType(AiModelOwnerType ownerType, String modelName, AiModelType modelType);
+
     Optional<AiModelConfig> findFirstByOwnerTypeAndModelTypeAndOwnerUserIdAndEnabledTrueOrderByIdAsc(
             AiModelOwnerType ownerType,
             AiModelType modelType,

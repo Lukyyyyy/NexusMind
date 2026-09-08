@@ -209,7 +209,7 @@ class AgentOrchestratorTest {
 
     private static ModelConfigService modelConfigs(int maxToolCalls) {
         return new ModelConfigService(
-                null, null, null, null, null,
+                null, null, null, null, null, null,
                 "", "", "", "", "", "", 1, false, 1, 2048, 30) {
             @Override
             public ResolvedModelConfig resolveLlmConfig(String username) {

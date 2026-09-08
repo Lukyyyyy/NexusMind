@@ -9,6 +9,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.ArrayList;
 import java.time.Duration;
+import java.nio.charset.StandardCharsets;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
@@ -22,6 +23,8 @@ import org.slf4j.LoggerFactory;
 import com.luky.nexusmind.config.AiProperties;
 import com.luky.nexusmind.service.AiTraceService;
 import com.luky.nexusmind.service.ModelConfigService;
+import com.luky.nexusmind.service.ModelUsageService;
+import org.springframework.beans.factory.annotation.Autowired;
 import com.luky.nexusmind.agent.ToolCall;
 import com.luky.nexusmind.agent.ToolDefinition;
 
@@ -35,6 +38,7 @@ public class DeepSeekClient {
     private final AiProperties aiProperties;
     private final AiTraceService aiTraceService;
     private final ModelConfigService modelConfigService;
+    private ModelUsageService modelUsageService;
     private static final Logger logger = LoggerFactory.getLogger(DeepSeekClient.class);
 
     public DeepSeekClient(AiProperties aiProperties,
@@ -43,6 +47,11 @@ public class DeepSeekClient {
         this.aiProperties = aiProperties;
         this.aiTraceService = aiTraceService;
         this.modelConfigService = modelConfigService;
+    }
+
+    @Autowired
+    void setModelUsageService(ModelUsageService modelUsageService) {
+        this.modelUsageService = modelUsageService;
     }
 
     public void streamResponse(String userMessage,
@@ -73,6 +82,9 @@ public class DeepSeekClient {
             Runnable onComplete) {
         WebClient webClient = buildWebClient(modelConfig);
         Map<String, Object> request = buildRequest(userMessage, context, history, modelConfig);
+        ModelUsageService.Reservation reservation = reserve(modelConfig, userId, "chat.response", request,
+                ((Number) request.getOrDefault("max_tokens", 16384)).intValue());
+        request.put("max_tokens", reservation.allowedMaxTokens());
         AiTraceService.TraceSpan span = aiTraceService.startSpan(
                 "llm.deepseek.stream", userId, sessionId, conversationId)
                 .attribute("langfuse.observation.type", "generation")
@@ -102,6 +114,7 @@ public class DeepSeekClient {
         }
 
         AtomicLong responseChars = new AtomicLong();
+        AtomicLong estimatedOutputTokens = new AtomicLong();
         AtomicReference<Usage> usage = new AtomicReference<>();
         StringBuilder completionCapture = aiTraceService.shouldCaptureContent() ? new StringBuilder() : null;
 
@@ -117,6 +130,7 @@ public class DeepSeekClient {
                     .subscribe(
                             chunk -> processChunk(chunk, content -> {
                                 responseChars.addAndGet(content.length());
+                                estimatedOutputTokens.addAndGet(estimatedTokens(content));
                                 appendCapturedContent(completionCapture, content);
                                 onChunk.accept(content);
                             }, usage::set),
@@ -126,6 +140,8 @@ public class DeepSeekClient {
                                 captureCompletion(span, completionCapture);
                                 span.error(error);
                                 span.end();
+                                if (usage.get() == null && responseChars.get() == 0) release(reservation);
+                                else finishReservation(reservation, usage.get(), estimatedOutputTokens.get());
                                 onError.accept(error);
                             },
                             () -> {
@@ -133,9 +149,11 @@ public class DeepSeekClient {
                                 applyUsageAttributes(span, usage.get());
                                 captureCompletion(span, completionCapture);
                                 span.end();
+                                finishReservation(reservation, usage.get(), estimatedOutputTokens.get());
                                 onComplete.run();
                             });
         } catch (RuntimeException e) {
+            release(reservation);
             span.error(e);
             span.end();
             throw e;
@@ -174,6 +192,10 @@ public class DeepSeekClient {
                         "description", tool.description(),
                         "parameters", tool.parameters()))).toList());
         request.put("tool_choice", "auto");
+        int requestedMax = modelConfig.maxTokens() == null ? 16384 : modelConfig.maxTokens();
+        request.put("max_tokens", requestedMax);
+        ModelUsageService.Reservation reservation = reserve(modelConfig, userId, "agent.tool-decision", request, requestedMax);
+        request.put("max_tokens", reservation.allowedMaxTokens());
 
         AiTraceService.TraceSpan span = aiTraceService.startSpan(
                         "llm.agent.tool_decision", userId, sessionId, conversationId)
@@ -214,14 +236,18 @@ public class DeepSeekClient {
             }
             span.attribute("nexusmind.agent.tool_calls.count", calls.size());
             // 非流式决策调用同样上报 token 用量，否则可观测页 Tokens 为空、成本无法归集
-            applyUsageAttributes(span, parseUsage(root.path("usage")));
+            Usage parsedUsage = parseUsage(root.path("usage"));
+            applyUsageAttributes(span, parsedUsage);
+            finishReservation(reservation, parsedUsage, estimatedTokens(message.toString()));
             span.end();
             return new AgentDecision(message.deepCopy(), calls);
         } catch (CancellationException e) {
+            release(reservation);
             span.attribute("nexusmind.trace.end_reason", "user_cancelled");
             span.end();
             throw e;
         } catch (Exception e) {
+            release(reservation);
             span.error(e);
             span.end();
             throw e instanceof RuntimeException runtime ? runtime : new RuntimeException("Tool Calling 请求失败", e);
@@ -269,13 +295,13 @@ public class DeepSeekClient {
         if (modelConfig.temperature() != null) request.put("temperature", modelConfig.temperature());
         if (modelConfig.topP() != null) request.put("top_p", modelConfig.topP());
         if (modelConfig.maxTokens() != null) request.put("max_tokens", modelConfig.maxTokens());
-        streamRequest(buildWebClient(modelConfig), request, modelConfig.modelName(), userId, sessionId,
+        streamRequest(buildWebClient(modelConfig), request, modelConfig, userId, sessionId,
                 conversationId, cancellation, onChunk, onError, onComplete);
     }
 
     private void streamRequest(WebClient webClient,
                                Map<String, Object> request,
-                               String modelName,
+                               ModelConfigService.ResolvedModelConfig modelConfig,
                                String userId,
                                String sessionId,
                                String conversationId,
@@ -286,9 +312,13 @@ public class DeepSeekClient {
         AiTraceService.TraceSpan span = aiTraceService.startSpan(
                         "llm.agent.stream", userId, sessionId, conversationId)
                 .attribute("langfuse.observation.type", "generation")
-                .attribute("langfuse.observation.model.name", modelName)
-                .attribute("gen_ai.request.model", modelName);
+                        .attribute("langfuse.observation.model.name", modelConfig.modelName())
+                .attribute("gen_ai.request.model", modelConfig.modelName());
+        int requestedMax = ((Number) request.getOrDefault("max_tokens", 16384)).intValue();
+        ModelUsageService.Reservation reservation = reserve(modelConfig, userId, "agent.response", request, requestedMax);
+        request.put("max_tokens", reservation.allowedMaxTokens());
         AtomicLong responseChars = new AtomicLong();
+        AtomicLong estimatedOutputTokens = new AtomicLong();
         AtomicReference<Usage> usage = new AtomicReference<>();
         StringBuilder completionCapture = aiTraceService.shouldCaptureContent() ? new StringBuilder() : null;
         try {
@@ -299,6 +329,7 @@ public class DeepSeekClient {
                     .takeUntilOther(cancellation.signal())
                     .subscribe(chunk -> processChunk(chunk, content -> {
                                 responseChars.addAndGet(content.length());
+                                estimatedOutputTokens.addAndGet(estimatedTokens(content));
                                 appendCapturedContent(completionCapture, content);
                                 onChunk.accept(content);
                             }, usage::set),
@@ -308,6 +339,8 @@ public class DeepSeekClient {
                                 captureCompletion(span, completionCapture);
                                 span.error(error);
                                 span.end();
+                                if (usage.get() == null && responseChars.get() == 0) release(reservation);
+                                else finishReservation(reservation, usage.get(), estimatedOutputTokens.get());
                                 onError.accept(error);
                             },
                             () -> {
@@ -315,9 +348,11 @@ public class DeepSeekClient {
                                 applyUsageAttributes(span, usage.get());
                                 captureCompletion(span, completionCapture);
                                 span.end();
+                                finishReservation(reservation, usage.get(), estimatedOutputTokens.get());
                                 onComplete.run();
                             });
         } catch (RuntimeException e) {
+            release(reservation);
             span.error(e);
             span.end();
             throw e;
@@ -330,10 +365,15 @@ public class DeepSeekClient {
     }
 
     public String generateTitle(String configUsername, String userMessage) {
-        return generateTitle(modelConfigService.resolveLlmConfig(configUsername), userMessage);
+        return generateTitle(modelConfigService.resolveLlmConfig(configUsername), configUsername, userMessage);
     }
 
     public String generateTitle(ModelConfigService.ResolvedModelConfig modelConfig, String userMessage) {
+        return generateTitle(modelConfig, null, userMessage);
+    }
+
+    public String generateTitle(ModelConfigService.ResolvedModelConfig modelConfig, String userId, String userMessage) {
+        ModelUsageService.Reservation reservation = null;
         try {
             WebClient webClient = buildWebClient(modelConfig);
             Map<String, Object> request = new java.util.HashMap<>();
@@ -350,29 +390,60 @@ public class DeepSeekClient {
                             """),
                     Map.of("role", "user", "content", abbreviate(userMessage, 800))
             ));
+            reservation = reserve(modelConfig, userId, "chat.title", request, 512);
+            request.put("max_tokens", reservation.allowedMaxTokens());
+            AtomicReference<Usage> usage = new AtomicReference<>();
             String title = collectTitle(webClient.post()
                     .uri("/chat/completions")
                     .contentType(MediaType.APPLICATION_JSON)
                     .bodyValue(request)
                     .retrieve()
-                    .bodyToFlux(String.class));
+                    .bodyToFlux(String.class), usage::set);
+            finishReservation(reservation, usage.get(), estimatedTokens(title));
             if (title.isEmpty()) {
                 logger.warn("标题模型返回空内容，模型: {}", modelConfig.modelName());
                 return null;
             }
             return title;
         } catch (Exception e) {
+            release(reservation);
             logger.warn("生成会话标题失败，保留临时标题: {}", e.getMessage());
             return null;
         }
     }
 
     String collectTitle(Flux<String> chunks) {
+        return collectTitle(chunks, usage -> {});
+    }
+
+    private String collectTitle(Flux<String> chunks, Consumer<Usage> onUsage) {
         StringBuilder title = new StringBuilder();
-        chunks.doOnNext(chunk -> processChunk(chunk, title::append, usage -> {}))
+        chunks.doOnNext(chunk -> processChunk(chunk, title::append, onUsage))
                 .then()
                 .block(TITLE_TIMEOUT);
         return title.toString();
+    }
+
+    private ModelUsageService.Reservation reserve(ModelConfigService.ResolvedModelConfig config, String userId,
+                                                   String scenario, Object input, int maxTokens) {
+        return modelUsageService == null ? new ModelUsageService.Reservation(null, maxTokens, 0, true)
+                : modelUsageService.reserve(config, userId, scenario, input, maxTokens);
+    }
+
+    private void finishReservation(ModelUsageService.Reservation reservation, Usage usage, long outputChars) {
+        if (modelUsageService == null || reservation == null) return;
+        if (usage == null) { modelUsageService.settleEstimated(reservation, outputChars); return; }
+        modelUsageService.settle(reservation, usage.promptTokens() == null ? reservation.estimatedInputTokens() : usage.promptTokens(),
+                usage.promptCacheHitTokens() == null ? 0 : usage.promptCacheHitTokens(),
+                usage.completionTokens() == null ? outputChars : usage.completionTokens());
+    }
+
+    private void release(ModelUsageService.Reservation reservation) {
+        if (modelUsageService != null) modelUsageService.release(reservation);
+    }
+
+    private static long estimatedTokens(String value) {
+        return value == null ? 0 : value.getBytes(StandardCharsets.UTF_8).length;
     }
 
     private Map<String, Object> buildRequest(String userMessage,
@@ -499,11 +570,13 @@ public class DeepSeekClient {
         if (usageNode == null || usageNode.isMissingNode() || usageNode.isNull()) {
             return null;
         }
+        Long cacheHit = longOrNull(usageNode.path("prompt_cache_hit_tokens"));
+        if (cacheHit == null) cacheHit = longOrNull(usageNode.path("prompt_tokens_details").path("cached_tokens"));
         return new Usage(
                 longOrNull(usageNode.path("prompt_tokens")),
                 longOrNull(usageNode.path("completion_tokens")),
                 longOrNull(usageNode.path("total_tokens")),
-                longOrNull(usageNode.path("prompt_cache_hit_tokens")),
+                cacheHit,
                 longOrNull(usageNode.path("prompt_cache_miss_tokens")));
     }
 

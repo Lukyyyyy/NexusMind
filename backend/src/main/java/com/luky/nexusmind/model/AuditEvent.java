@@ -37,7 +37,7 @@ public class AuditEvent {
     @Column(name = "target_org_tag", length = 255)
     private String targetOrgTag;
 
-    @Column(length = 200)
+    @Column(length = 1000)
     private String reason;
 
     @Column(name = "ip_address", length = 64)

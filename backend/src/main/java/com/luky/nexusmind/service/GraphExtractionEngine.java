@@ -424,7 +424,7 @@ public class GraphExtractionEngine {
                                 var located =
                                         client
                                                 .dictionaryOnce(
-                                                        config, prompt, s.instructions, false)
+                                                        config, username, prompt, s.instructions, false)
                                                 .stream()
                                                 .map(e -> locate(e, batch))
                                                 .toList();
@@ -448,7 +448,7 @@ public class GraphExtractionEngine {
                                         .filter(e -> valid(e, batch, s.title))
                                         .toList();
                             }
-                            return client.relationsOnce(config, prompt, s.instructions);
+                            return client.relationsOnce(config, username, prompt, s.instructions);
                         })
                 .handle(
                         (value, error) -> {
@@ -825,7 +825,7 @@ public class GraphExtractionEngine {
                                             config -> {
                                                 current(f.getId(), token);
                                                 return client.dictionaryOnce(
-                                                        config, input, s.instructions, true);
+                                                        config, username, input, s.instructions, true);
                                             })
                                     .join();
                     break;

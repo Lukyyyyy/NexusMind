@@ -8,6 +8,7 @@ import com.luky.nexusmind.model.AiModelType;
 import com.luky.nexusmind.model.User;
 import com.luky.nexusmind.model.UserModelPreference;
 import com.luky.nexusmind.repository.AiModelConfigRepository;
+import com.luky.nexusmind.repository.ModelPricingRuleRepository;
 import com.luky.nexusmind.repository.UserModelPreferenceRepository;
 import com.luky.nexusmind.repository.UserRepository;
 import org.springframework.beans.factory.annotation.Value;
@@ -37,6 +38,7 @@ public class ModelConfigService {
     private final int globalRerankWindow;
 
     private final AiModelConfigRepository configRepository;
+    private final ModelPricingRuleRepository pricingRepository;
     private final UserModelPreferenceRepository preferenceRepository;
     private final UserRepository userRepository;
     private final ModelConfigCryptoService cryptoService;
@@ -54,6 +56,7 @@ public class ModelConfigService {
 
     public ModelConfigService(
             AiModelConfigRepository configRepository,
+            ModelPricingRuleRepository pricingRepository,
             UserModelPreferenceRepository preferenceRepository,
             UserRepository userRepository,
             ModelConfigCryptoService cryptoService,
@@ -70,6 +73,7 @@ public class ModelConfigService {
             @Value("${embedding.api.dimension:2048}") int legacyEmbeddingDimension,
             @Value("${ai.retrieval.rerank-top-n:30}") int globalRerankWindow) {
         this.configRepository = configRepository;
+        this.pricingRepository = pricingRepository;
         this.preferenceRepository = preferenceRepository;
         this.userRepository = userRepository;
         this.cryptoService = cryptoService;
@@ -91,10 +95,12 @@ public class ModelConfigService {
     public ModelConfigOverview listVisibleConfigs(String username) {
         User user = requireUser(username);
         List<AiModelConfig> configs = new ArrayList<>();
-        if (user.getRole().isAdministrator()) {
+        if (user.getRole() == User.Role.SUPER_ADMIN) {
             configs.addAll(configRepository.findByOwnerType(AiModelOwnerType.SYSTEM));
         } else {
-            configs.addAll(configRepository.findByOwnerTypeAndEnabledTrue(AiModelOwnerType.SYSTEM));
+            configs.addAll(configRepository.findByOwnerType(AiModelOwnerType.SYSTEM).stream()
+                    .filter(config -> canView(user, config))
+                    .toList());
         }
         configs.addAll(configRepository.findByOwnerTypeAndOwnerUserId(AiModelOwnerType.USER, user.getId()));
         configs.sort(Comparator.comparing(AiModelConfig::getModelType).thenComparing(AiModelConfig::getName));
@@ -252,7 +258,7 @@ public class ModelConfigService {
                 return own.map(this::toResolved);
             }
         }
-        return resolveSystemDefault(AiModelType.RERANK);
+        return user == null ? resolveSystemDefault(AiModelType.RERANK) : resolveSystemDefault(AiModelType.RERANK, user);
     }
 
     private User findUserFlexible(String userIdOrName) {
@@ -289,7 +295,7 @@ public class ModelConfigService {
                 return preference.getRerankConfigId();
             }
         }
-        return resolveSystemDefault(AiModelType.RERANK)
+        return resolveSystemDefault(AiModelType.RERANK, user)
                 .map(ResolvedModelConfig::id)
                 .orElse(null);
     }
@@ -317,7 +323,7 @@ public class ModelConfigService {
                 return preferred.map(this::toResolved);
             }
         }
-        return resolveSystemDefault(modelType);
+        return resolveSystemDefault(modelType, user);
     }
 
     private Long effectiveSelectedConfigId(User user, UserModelPreference preference, AiModelType modelType) {
@@ -334,7 +340,7 @@ public class ModelConfigService {
                 return preferredId;
             }
         }
-        return resolveSystemDefault(modelType)
+        return resolveSystemDefault(modelType, user)
                 .map(ResolvedModelConfig::id)
                 .orElse(null);
     }
@@ -343,6 +349,14 @@ public class ModelConfigService {
         return configRepository.findFirstByOwnerTypeAndModelTypeAndDefaultModelTrueAndEnabledTrue(
                         AiModelOwnerType.SYSTEM,
                         modelType)
+                .map(this::toResolved);
+    }
+
+    private Optional<ResolvedModelConfig> resolveSystemDefault(AiModelType modelType, User user) {
+        return configRepository.findFirstByOwnerTypeAndModelTypeAndDefaultModelTrueAndEnabledTrue(
+                        AiModelOwnerType.SYSTEM,
+                        modelType)
+                .filter(config -> canView(user, config))
                 .map(this::toResolved);
     }
 
@@ -453,7 +467,9 @@ public class ModelConfigService {
 
     private boolean canView(User user, AiModelConfig config) {
         if (config.getOwnerType() == AiModelOwnerType.SYSTEM) {
-            return config.isEnabled() || user.getRole().isAdministrator();
+            if (user.getRole() == User.Role.SUPER_ADMIN) return true;
+            return (config.isEnabled() || user.getRole().isAdministrator())
+                    && pricingRepository.findByModelName(config.getModelName()).filter(rule -> rule.isEnabled()).isPresent();
         }
         return user.getId().equals(config.getOwnerUserId());
     }

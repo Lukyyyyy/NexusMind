@@ -4,6 +4,9 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.luky.nexusmind.service.AiTraceService;
 import com.luky.nexusmind.service.ModelConfigService;
+import com.luky.nexusmind.service.ModelUsageService;
+import com.luky.nexusmind.exception.CustomException;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.slf4j.Logger;
@@ -46,6 +49,7 @@ public class EmbeddingClient {
     private final ObjectMapper objectMapper;
     private final AiTraceService aiTraceService;
     private final ModelConfigService modelConfigService;
+    private ModelUsageService modelUsageService;
 
     public EmbeddingClient(ObjectMapper objectMapper,
                            AiTraceService aiTraceService,
@@ -54,6 +58,9 @@ public class EmbeddingClient {
         this.aiTraceService = aiTraceService;
         this.modelConfigService = modelConfigService;
     }
+
+    @Autowired
+    void setModelUsageService(ModelUsageService modelUsageService) { this.modelUsageService = modelUsageService; }
 
     /**
      * 调用通义千问 API 生成向量
@@ -88,9 +95,9 @@ public class EmbeddingClient {
             span.attribute("nexusmind.embedding.batch.count", batches.size());
             List<float[]> all;
             if (concurrentEnabled && effectiveMaxConcurrency > 1 && batches.size() > 1) {
-                all = embedConcurrently(batches, texts.size(), effectiveMaxConcurrency, modelConfig, effectiveDimension);
+                all = embedConcurrently(batches, texts.size(), effectiveMaxConcurrency, modelConfig, effectiveDimension, userId);
             } else {
-                all = embedSerially(batches, texts.size(), modelConfig, effectiveDimension);
+                all = embedSerially(batches, texts.size(), modelConfig, effectiveDimension, userId);
             }
 
             logger.info("成功生成向量，总数量: {}", all.size());
@@ -101,6 +108,7 @@ public class EmbeddingClient {
             logger.error("调用向量化 API 失败: {}", e.getMessage(), e);
             span.error(e);
             span.end();
+            if (e instanceof CustomException quotaError) throw quotaError;
             throw new RuntimeException("向量生成失败", e);
         } finally {
             span.close();
@@ -111,7 +119,7 @@ public class EmbeddingClient {
                                             int expectedSize,
                                             int maxConcurrency,
                                             ModelConfigService.ResolvedModelConfig modelConfig,
-                                            int dimension) throws Exception {
+                                            int dimension, String userId) throws Exception {
         int concurrency = Math.min(maxConcurrency, batches.size());
         ExecutorService executor = Executors.newFixedThreadPool(concurrency);
         List<CompletableFuture<List<float[]>>> futures = new ArrayList<>(batches.size());
@@ -121,7 +129,7 @@ public class EmbeddingClient {
                 final int batchIndex = i;
                 final List<String> batch = batches.get(i);
                 futures.add(CompletableFuture.supplyAsync(com.luky.nexusmind.service.FileTaskControl.propagate(
-                        () -> callAndParseBatch(batchIndex, batch, modelConfig, dimension)), executor));
+                        () -> callAndParseBatch(batchIndex, batch, modelConfig, dimension, userId)), executor));
             }
 
             List<float[]> all = new ArrayList<>(expectedSize);
@@ -135,7 +143,7 @@ public class EmbeddingClient {
             futures.forEach(future -> future.cancel(true));
             executor.shutdownNow();
             logger.warn("并发向量化失败，自动回退为串行请求: {}", e.getMessage());
-            return embedSerially(batches, expectedSize, modelConfig, dimension);
+            return embedSerially(batches, expectedSize, modelConfig, dimension, userId);
         } finally {
             futures.forEach(future -> future.cancel(true));
             executor.shutdownNow();
@@ -145,11 +153,11 @@ public class EmbeddingClient {
     private List<float[]> embedSerially(List<List<String>> batches,
                                         int expectedSize,
                                         ModelConfigService.ResolvedModelConfig modelConfig,
-                                        int dimension) throws Exception {
+                                        int dimension, String userId) throws Exception {
         logger.info("使用串行向量化，批次数: {}", batches.size());
         List<float[]> all = new ArrayList<>(expectedSize);
         for (int i = 0; i < batches.size(); i++) {
-            all.addAll(callAndParseBatch(i, batches.get(i), modelConfig, dimension));
+            all.addAll(callAndParseBatch(i, batches.get(i), modelConfig, dimension, userId));
         }
         return all;
     }
@@ -157,16 +165,28 @@ public class EmbeddingClient {
     private List<float[]> callAndParseBatch(int batchIndex,
                                             List<String> batch,
                                             ModelConfigService.ResolvedModelConfig modelConfig,
-                                            int dimension) {
+                                            int dimension, String userId) {
+        ModelUsageService.Reservation reservation = modelUsageService == null
+                ? new ModelUsageService.Reservation(null, 0, 0, true)
+                : modelUsageService.reserve(modelConfig, userId, "embedding.batch", batch, 0);
         try {
             logger.debug("调用向量 API, 批次: {} (size={})", batchIndex, batch.size());
             String response = callApiOnce(batch, modelConfig, dimension);
-            return parseVectors(response);
+            JsonNode root = objectMapper.readTree(response);
+            JsonNode usage = root.path("usage");
+            long tokens = usage.path("prompt_tokens").asLong(usage.path("input_tokens").asLong(usage.path("total_tokens").asLong(reservation.estimatedInputTokens())));
+            if (modelUsageService != null) modelUsageService.settle(reservation, tokens, 0, 0);
+            return parseVectors(root);
+        } catch (CustomException e) {
+            if (modelUsageService != null) modelUsageService.release(reservation);
+            throw e;
         } catch (WebClientResponseException e) {
+            if (modelUsageService != null) modelUsageService.release(reservation);
             logger.error("向量化批次失败: batchIndex={}, status={}, responseBody={}",
                     batchIndex, e.getStatusCode(), e.getResponseBodyAsString());
             throw new RuntimeException("向量化批次失败: " + batchIndex, e);
         } catch (Exception e) {
+            if (modelUsageService != null) modelUsageService.release(reservation);
             throw new RuntimeException("向量化批次失败: " + batchIndex, e);
         }
     }
@@ -212,7 +232,10 @@ public class EmbeddingClient {
     }
 
     private List<float[]> parseVectors(String response) throws Exception {
-        JsonNode jsonNode = objectMapper.readTree(response);
+        return parseVectors(objectMapper.readTree(response));
+    }
+
+    private List<float[]> parseVectors(JsonNode jsonNode) {
         JsonNode data = jsonNode.get("data");  // 兼容模式下使用data字段
         if (data == null || !data.isArray()) {
             throw new RuntimeException("API 响应格式错误: data 字段不存在或不是数组");

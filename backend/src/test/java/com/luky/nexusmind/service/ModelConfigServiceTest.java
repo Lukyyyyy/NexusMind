@@ -45,7 +45,7 @@ class ModelConfigServiceTest {
                 new Class<?>[]{UserRepository.class},
                 (proxy, method, args) -> method.getName().equals("findByUsername") ? Optional.of(user) : null);
         ModelConfigService service = new ModelConfigService(
-                null, null, users,
+                null, null, null, users,
                 null, null,
                 "", "", "", "", "", "", 10, false, 10, 2048, 30);
 
@@ -84,7 +84,7 @@ class ModelConfigServiceTest {
                 new Class<?>[]{UserRepository.class},
                 (proxy, method, args) -> method.getName().equals("findByUsername") ? Optional.of(user) : null);
         ModelConfigService service = new ModelConfigService(
-                null, null, users,
+                null, null, null, users,
                 null, null,
                 "", "", "", "", "", "", 10, false, 10, 2048, 30);
 

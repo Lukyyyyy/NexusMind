@@ -75,6 +75,8 @@ public class SecurityConfig {
                             .requestMatchers("/api/v1/search/**").hasAnyRole("USER", "ADMIN", "SUPER_ADMIN")
                             // 聊天相关接口 - WebSocket停止Token获取 (允许匿名访问)
                             .requestMatchers("/api/v1/chat/websocket-token").permitAll()
+                            // 额度与计价只能由超级管理员维护；需置于通用 admin 规则之前。
+                            .requestMatchers("/api/v1/admin/model-usage/**").hasRole("SUPER_ADMIN")
                             // 管理员专属接口 - 知识库管理、系统状态、用户活动监控
                             .requestMatchers("/api/v1/admin/**").hasAnyRole("ADMIN", "SUPER_ADMIN")
                             // 模型配置：普通用户管理自己的模型，管理员额外管理系统模型

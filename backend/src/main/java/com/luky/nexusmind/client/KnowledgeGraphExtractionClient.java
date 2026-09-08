@@ -3,6 +3,8 @@ package com.luky.nexusmind.client;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.luky.nexusmind.service.ModelConfigService;
+import com.luky.nexusmind.service.ModelUsageService;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpHeaders;
@@ -67,16 +69,20 @@ public class KnowledgeGraphExtractionClient {
 
     private final ModelConfigService modelConfigService;
     private final ObjectMapper objectMapper;
+    private ModelUsageService modelUsageService;
 
     public KnowledgeGraphExtractionClient(ModelConfigService modelConfigService, ObjectMapper objectMapper) {
         this.modelConfigService = modelConfigService;
         this.objectMapper = objectMapper;
     }
 
+    @Autowired
+    void setModelUsageService(ModelUsageService modelUsageService) { this.modelUsageService = modelUsageService; }
+
     public ExtractionResult extract(String username, String chunkText, String templateInstructions) {
         ModelConfigService.ResolvedModelConfig config = modelConfigService.resolveGraphExtractionConfig(username);
         String prompt = withTemplate(SYSTEM_PROMPT, templateInstructions);
-        return new ExtractionResult(config.modelName(), extractItems(config, prompt, chunkText,
+        return new ExtractionResult(config.modelName(), extractItems(config, username, prompt, chunkText,
                 "relations", ExtractedRelation.class, "图谱抽取"));
     }
 
@@ -84,12 +90,12 @@ public class KnowledgeGraphExtractionClient {
                                                 String templateInstructions) {
         ModelConfigService.ResolvedModelConfig config = modelConfigService.resolveGraphExtractionConfig(username);
         String input = "文档标题：" + documentTitle + "\n\n文档正文：\n" + documentContext;
-        return new EntityGlossary(config.modelName(), extractItems(config,
+        return new EntityGlossary(config.modelName(), extractItems(config, username,
                 withTemplate(GLOSSARY_PROMPT, templateInstructions), input,
                 "entities", EntityResolution.class, "实体词典"));
     }
 
-    private <T> List<T> extractItems(ModelConfigService.ResolvedModelConfig config, String prompt,
+    private <T> List<T> extractItems(ModelConfigService.ResolvedModelConfig config, String userKey, String prompt,
                                    String input, String field, Class<T> itemType, String stage) {
         // Keep the configured budget on retry; reducing it makes truncated responses more likely.
         int maxTokens = config.maxTokens() == null ? 4000 : config.maxTokens();
@@ -102,7 +108,7 @@ public class KnowledgeGraphExtractionClient {
                         + "本次最多返回 10 项，证据保持简短，不要附加解释。";
             }
             // HTTP and transport errors are not JSON errors and must retain their original cause.
-            String response = complete(config, attemptPrompt, input, maxTokens);
+            String response = complete(config, userKey, attemptPrompt, input, maxTokens, "knowledge-graph." + stage);
             try {
                 JsonNode root = responseJson(response, config.modelName(), stage, attempt, maxTokens);
                 if (root == null || !root.isObject() || !root.path(field).isArray()) {
@@ -132,6 +138,11 @@ public class KnowledgeGraphExtractionClient {
 
     public List<DictionaryEntry> dictionaryOnce(ModelConfigService.ResolvedModelConfig config,
             String input, String instructions, boolean resolveConflicts) {
+        return dictionaryOnce(config, null, input, instructions, resolveConflicts);
+    }
+
+    public List<DictionaryEntry> dictionaryOnce(ModelConfigService.ResolvedModelConfig config, String userKey,
+            String input, String instructions, boolean resolveConflicts) {
         String prompt;
         if (resolveConflicts) {
             prompt = "根据输入候选中的原文证据解决名称映射冲突，只输出有证据支持的唯一映射；无法确定则不输出。"
@@ -151,18 +162,22 @@ public class KnowledgeGraphExtractionClient {
                     + "\n输出格式：{\"entries\":[{\"name\":\"SED\",\"type\":\"TASK\","
                     + "\"canonicalName\":\"声音事件检测\",\"chunkId\":1,\"evidence\":\"声音事件检测简称SED\"}]}";
         }
-        return single(config, withTemplate(prompt, instructions), input, "entries", DictionaryEntry.class, "实体词典");
+        return single(config, userKey, withTemplate(prompt, instructions), input, "entries", DictionaryEntry.class, "实体词典");
     }
 
     public ExtractionResult relationsOnce(ModelConfigService.ResolvedModelConfig config, String input, String instructions) {
-        return new ExtractionResult(config.modelName(), single(config, withTemplate(SYSTEM_PROMPT, instructions),
+        return relationsOnce(config, null, input, instructions);
+    }
+
+    public ExtractionResult relationsOnce(ModelConfigService.ResolvedModelConfig config, String userKey, String input, String instructions) {
+        return new ExtractionResult(config.modelName(), single(config, userKey, withTemplate(SYSTEM_PROMPT, instructions),
                 input, "relations", ExtractedRelation.class, "图谱抽取"));
     }
 
-    private <T> List<T> single(ModelConfigService.ResolvedModelConfig config, String prompt, String input,
+    private <T> List<T> single(ModelConfigService.ResolvedModelConfig config, String userKey, String prompt, String input,
                                String field, Class<T> type, String stage) {
         int budget = config.maxTokens() == null ? 16384 : config.maxTokens();
-        String response = complete(config, prompt, input, budget);
+        String response = complete(config, userKey, prompt, input, budget, "knowledge-graph." + stage);
         JsonNode root = responseJson(response, config.modelName(), stage, 1, budget);
         if (root == null || !root.isObject() || !root.path(field).isArray())
             throw new InvalidModelResponse("模型返回的 JSON 缺少 " + field + " 数组或字段类型错误");
@@ -176,8 +191,8 @@ public class KnowledgeGraphExtractionClient {
         return false;
     }
 
-    private String complete(ModelConfigService.ResolvedModelConfig config, String systemPrompt,
-                            String userPrompt, int maxTokens) {
+    private String complete(ModelConfigService.ResolvedModelConfig config, String userKey, String systemPrompt,
+                            String userPrompt, int maxTokens, String scenario) {
         WebClient.Builder builder = WebClient.builder().baseUrl(config.baseUrl());
         if (config.apiKey() != null && !config.apiKey().isBlank()) {
             builder.defaultHeader(HttpHeaders.AUTHORIZATION, "Bearer " + config.apiKey());
@@ -200,13 +215,13 @@ public class KnowledgeGraphExtractionClient {
         WebClient webClient = builder.build();
         String response;
         try {
-            response = invoke(webClient, request);
+            response = invokeBilled(webClient, request, config, userKey, scenario, maxTokens);
         } catch (WebClientResponseException.BadRequest unsupportedStructuredOutput) {
             String errorBody = unsupportedStructuredOutput.getResponseBodyAsString();
             if (!errorBody.contains("response_format")) throw unsupportedStructuredOutput;
             logger.info("图谱模型不接受 response_format，改用提示词约束 JSON: model={}", config.modelName());
             request.remove("response_format");
-            response = invoke(webClient, request);
+            response = invokeBilled(webClient, request, config, userKey, scenario, maxTokens);
         }
         return response;
     }
@@ -285,6 +300,30 @@ public class KnowledgeGraphExtractionClient {
                 .retrieve()
                 .bodyToMono(String.class)
                 .block(Duration.ofMinutes(3));
+    }
+
+    private String invokeBilled(WebClient webClient, Map<String, Object> request,
+                                ModelConfigService.ResolvedModelConfig config, String userKey,
+                                String scenario, int maxTokens) {
+        ModelUsageService.Reservation reservation = modelUsageService == null
+                ? new ModelUsageService.Reservation(null, maxTokens, 0, true)
+                : modelUsageService.reserve(config, userKey, scenario, request, maxTokens);
+        request.put("max_tokens", reservation.allowedMaxTokens());
+        try {
+            String response = invoke(webClient, request);
+            JsonNode usage = objectMapper.readTree(response).path("usage");
+            if (modelUsageService != null) modelUsageService.settle(reservation,
+                    usage.path("prompt_tokens").asLong(reservation.estimatedInputTokens()),
+                    usage.path("prompt_cache_hit_tokens").asLong(0),
+                    usage.path("completion_tokens").asLong(0));
+            return response;
+        } catch (RuntimeException e) {
+            if (modelUsageService != null) modelUsageService.release(reservation);
+            throw e;
+        } catch (Exception e) {
+            if (modelUsageService != null) modelUsageService.release(reservation);
+            throw new IllegalStateException("无法解析模型用量", e);
+        }
     }
 
     private String stripCodeFence(String value) {

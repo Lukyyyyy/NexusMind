@@ -413,7 +413,7 @@ public class ChatHandler {
             }
             chatTitleExecutor.execute(() -> {
                 try {
-                    String title = deepSeekClient.generateTitle(modelConfig, userMessage);
+                    String title = deepSeekClient.generateTitle(modelConfig, userId, userMessage);
                     if (!hasText(title)) {
                         logger.warn("标题模型未返回有效内容，会话ID: {}", chatSessionId);
                         return;
