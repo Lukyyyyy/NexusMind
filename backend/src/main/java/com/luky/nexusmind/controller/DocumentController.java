@@ -356,13 +356,13 @@ public class DocumentController {
         }
         try {
             return userRepository.findById(Long.parseLong(userId))
-                    .map(user -> user.getUsername())
+                    .map(user -> user.getDisplayName())
                     .orElse(userId);
         } catch (NumberFormatException ignored) {
             // Older records may store username directly in file_upload.user_id.
         }
         return userRepository.findByUsername(userId)
-                .map(user -> user.getUsername())
+                .map(user -> user.getDisplayName())
                 .orElse(userId);
     }
 

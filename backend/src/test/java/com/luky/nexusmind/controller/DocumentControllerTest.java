@@ -166,6 +166,7 @@ class DocumentControllerTest {
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> rows = (List<Map<String, Object>>) body.get("data");
         Map<String, Object> row = rows.get(0);
+        assertEquals("管理员", row.get("uploaderName"));
         assertEquals(ParseEngine.MINERU, row.get("actualParseEngine"));
         assertNotNull(row.get("processingDurationMillis"));
     }
@@ -250,10 +251,12 @@ class DocumentControllerTest {
         User admin = new User();
         admin.setId(1L);
         admin.setUsername("admin");
+        admin.setDisplayName("管理员");
         users.put(1L, admin);
         User jack = new User();
         jack.setId(2L);
         jack.setUsername("Jack");
+        jack.setDisplayName("杰克");
         users.put(2L, jack);
 
         return proxy(UserRepository.class, (proxy, method, args) -> switch (method.getName()) {

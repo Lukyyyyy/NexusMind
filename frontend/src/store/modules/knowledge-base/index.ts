@@ -139,7 +139,7 @@ export const useKnowledgeBaseStore = defineStore(SetupStoreId.KnowledgeBase, () 
       fileName: file.name,
       totalSize: file.size,
       userId: authStore.userInfo.id ? String(authStore.userInfo.id) : undefined,
-      uploaderName: authStore.userInfo.username || undefined,
+      uploaderName: authStore.userInfo.displayName || authStore.userInfo.username || undefined,
       public: form.isPublic,
       isPublic: form.isPublic,
       parseEngine: form.parseEngine,
