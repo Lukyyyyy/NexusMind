@@ -17,7 +17,7 @@ public interface ChatSessionRepository extends JpaRepository<ChatSession, Long> 
             select s from ChatSession s
             where s.user.username = :username
               and s.deletedAt is null
-              and exists (select m.id from ChatMessage m where m.session = s)
+              and s.title <> '新会话'
             order by s.updatedAt desc
             """)
     List<ChatSession> findHistoryByUsername(@Param("username") String username);

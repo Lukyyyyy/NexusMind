@@ -8,6 +8,7 @@ export const useChatStore = defineStore(SetupStoreId.Chat, () => {
   const messages = ref<Api.Chat.Message[]>([]);
   const loading = ref(false);
   const sessionLoading = ref(false);
+  const generatingSessionId = ref<number | null>(null);
   let sessionsRequestId = 0;
 
   const store = useAuthStore();
@@ -18,11 +19,21 @@ export const useChatStore = defineStore(SetupStoreId.Chat, () => {
     send: wsSend,
     open: wsOpen,
     close: wsClose
-  } = useWebSocket(`/proxy-ws/chat/${store.token}`, {
+  } = useWebSocket(computed(() => store.token ? `/proxy-ws/chat/${store.token}` : undefined), {
     autoReconnect: true
   });
 
   const scrollToBottom = ref<null | (() => void)>(null);
+
+  watch(wsData, value => {
+    if (!value || generatingSessionId.value == null) return;
+    try {
+      const event = JSON.parse(value);
+      if (event.type === 'completion' || event.error) generatingSessionId.value = null;
+    } catch {
+      // Ignore non-JSON websocket payloads; the message view handles display errors.
+    }
+  });
 
   const activeSession = computed(() =>
     draftSession.value?.id === activeSessionId.value
@@ -39,23 +50,26 @@ export const useChatStore = defineStore(SetupStoreId.Chat, () => {
     }
   }
 
-  async function loadSessions() {
+  async function loadSessions(showLoading = true) {
     const requestId = ++sessionsRequestId;
-    sessionLoading.value = true;
-    const { error, data } = await request<Api.Chat.Session[]>({ url: 'chat/sessions' });
-    if (!error && requestId === sessionsRequestId) {
-      const loaded = data || [];
-      const draft = draftSession.value;
-      const draftPersisted = draft && loaded.some(item => item.id === draft.id);
-      const draftVisible = draft && sessions.value.some(item => item.id === draft.id);
-      sessions.value = draft && draftVisible && !draftPersisted
-        ? [draft, ...loaded.filter(item => item.id !== draft.id)]
-        : loaded;
-      if (draftPersisted) {
-        draftSession.value = null;
+    if (showLoading) sessionLoading.value = true;
+    try {
+      const { error, data } = await request<Api.Chat.Session[]>({ url: 'chat/sessions' });
+      if (!error && requestId === sessionsRequestId) {
+        const loaded = data || [];
+        const draft = draftSession.value;
+        const draftPersisted = draft && loaded.some(item => item.id === draft.id);
+        const draftVisible = draft != null && draft.title !== '新会话' && sessions.value.some(item => item.id === draft.id);
+        sessions.value = draft && draftVisible && !draftPersisted
+          ? [draft, ...loaded.filter(item => item.id !== draft.id)]
+          : loaded;
+        if (draftPersisted) {
+          draftSession.value = null;
+        }
       }
+    } finally {
+      if (requestId === sessionsRequestId) sessionLoading.value = false;
     }
-    if (requestId === sessionsRequestId) sessionLoading.value = false;
   }
 
   async function createSession(scope?: Api.Chat.ScopeSelection) {
@@ -72,7 +86,8 @@ export const useChatStore = defineStore(SetupStoreId.Chat, () => {
   }
 
   async function applyScope(scope: Api.Chat.ScopeSelection) {
-    if (!activeSessionId.value || messages.value.length > 0) {
+    const started = messages.value.some(message => message.role === 'user' || message.role === 'assistant');
+    if (!activeSessionId.value || started) {
       return createSession(scope);
     }
     const { error, data } = await request<Api.Chat.Session>({
@@ -115,6 +130,34 @@ export const useChatStore = defineStore(SetupStoreId.Chat, () => {
     if (draftSession.value?.id === sessionId) draftSession.value = data;
     sessions.value = sessions.value.map(item => (item.id === sessionId ? data : item));
     return true;
+  }
+
+  async function switchSessionModel(modelConfigId: number) {
+    const sessionId = await ensureActiveSession();
+    if (!sessionId) return null;
+    const previousModelId = activeSession.value?.modelConfigId;
+    const started = messages.value.some(message => message.role === 'user' || message.role === 'assistant');
+    const { error, data } = await request<Api.Chat.Session>({
+      url: `chat/sessions/${sessionId}/model`,
+      method: 'patch',
+      data: { modelConfigId }
+    });
+    if (error) return null;
+    if (draftSession.value?.id === sessionId) draftSession.value = data;
+    sessions.value = sessions.value.map(item => (item.id === sessionId ? data : item));
+    if (started && previousModelId !== data.modelConfigId && data.modelName) {
+      messages.value.push({
+        role: 'model',
+        content: data.modelName,
+        status: 'finished',
+        timestamp: new Date().toISOString()
+      });
+    }
+    return data;
+  }
+
+  function startGeneration(sessionId: number) {
+    generatingSessionId.value = sessionId;
   }
 
   function applySessionTitle(sessionId: number, title: string) {
@@ -168,7 +211,7 @@ export const useChatStore = defineStore(SetupStoreId.Chat, () => {
         thinkingDurationMs: message.thinkingDurationMs ?? timing.thinkingDurationMs
       };
     });
-    await loadSessions();
+    await loadSessions(false);
   }
 
   return {
@@ -179,6 +222,7 @@ export const useChatStore = defineStore(SetupStoreId.Chat, () => {
     messages,
     loading,
     sessionLoading,
+    generatingSessionId,
     wsStatus,
     wsData,
     wsSend,
@@ -191,6 +235,8 @@ export const useChatStore = defineStore(SetupStoreId.Chat, () => {
     selectSession,
     loadMessages,
     renameSession,
+    switchSessionModel,
+    startGeneration,
     applySessionTitle,
     deleteSession,
     ensureActiveSession,

@@ -86,6 +86,14 @@ public class ChatSessionController {
         return ok("更新问答范围成功", sessionData(chatSessionService.updateScope(username, sessionId, scope)));
     }
 
+    @PatchMapping("/{sessionId}/model")
+    public ResponseEntity<?> updateModel(@RequestHeader("Authorization") String token,
+                                         @PathVariable Long sessionId,
+                                         @RequestBody ModelRequest request) {
+        return ok("切换模型成功", sessionData(chatSessionService.changeModel(
+                username(token), sessionId, request == null ? null : request.modelConfigId())));
+    }
+
     @DeleteMapping("/{sessionId}")
     public ResponseEntity<?> deleteSession(@RequestHeader("Authorization") String token,
                                            @PathVariable Long sessionId) {
@@ -132,6 +140,8 @@ public class ChatSessionController {
         data.put("createdAt", session.getCreatedAt());
         data.put("updatedAt", session.getUpdatedAt());
         data.put("scope", ChatScopeService.view(session));
+        data.put("modelConfigId", session.getLlmConfigId());
+        data.put("modelName", session.getLlmModelName());
         return data;
     }
 
@@ -151,5 +161,8 @@ public class ChatSessionController {
     }
 
     public record ScopeRequest(ChatScopeType type, String orgTag, List<Long> documentIds) {
+    }
+
+    public record ModelRequest(Long modelConfigId) {
     }
 }

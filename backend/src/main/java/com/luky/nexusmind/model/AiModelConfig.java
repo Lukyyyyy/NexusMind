@@ -53,6 +53,8 @@ public class AiModelConfig {
 
     private Integer maxTokens;
 
+    private Integer maxToolCalls;
+
     private Integer dimension;
 
     private Integer batchSize;

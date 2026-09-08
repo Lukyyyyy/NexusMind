@@ -193,6 +193,7 @@ declare namespace Api {
       temperature: number | null;
       topP: number | null;
       maxTokens: number | null;
+      maxToolCalls: number | null;
       dimension: number | null;
       batchSize: number | null;
       maxConcurrency: number | null;
@@ -225,6 +226,7 @@ declare namespace Api {
       temperature: number | null;
       topP: number | null;
       maxTokens: number | null;
+      maxToolCalls: number | null;
       dimension: number | null;
       batchSize: number | null;
       maxConcurrency: number | null;
@@ -725,7 +727,7 @@ declare namespace Api {
       chunk: string;
       content?: string;
       type?: 'completion' | 'stop' | 'content_replaced' | 'title_updated';
-      status?: 'finished';
+      status?: 'finished' | 'cancelled';
       sessionId?: number;
       title?: string;
       error?: string;
@@ -742,6 +744,8 @@ declare namespace Api {
       createdAt: string;
       updatedAt: string;
       scope: ScopeView;
+      modelConfigId: number | null;
+      modelName: string | null;
     }
 
     interface SendPayload {
@@ -756,9 +760,9 @@ declare namespace Api {
 
     interface Message {
       id?: number;
-      role: 'user' | 'assistant';
+      role: 'user' | 'assistant' | 'model';
       content: string;
-      status?: 'pending' | 'loading' | 'finished' | 'error';
+      status?: 'pending' | 'loading' | 'finished' | 'cancelled' | 'error';
       timestamp?: string;
       agentTrace?: AgentStep[] | string | null;
       /** 客户端发出本轮请求的时间，用于实时展示思考耗时 */

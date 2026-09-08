@@ -18,6 +18,8 @@ public interface ChatMessageRepository extends JpaRepository<ChatMessage, Long> 
 
     boolean existsBySessionId(Long sessionId);
 
+    boolean existsBySessionIdAndRoleIn(Long sessionId, List<String> roles);
+
     @Query("""
             select m
             from ChatMessage m

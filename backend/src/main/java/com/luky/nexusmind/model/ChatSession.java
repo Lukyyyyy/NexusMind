@@ -46,6 +46,13 @@ public class ChatSession {
     @Column(name = "scope_details", columnDefinition = "TEXT")
     private String scopeDetails;
 
+    @Column(name = "llm_config_id")
+    private Long llmConfigId;
+
+    /** Snapshot retained when the underlying model configuration is later renamed or removed. */
+    @Column(name = "llm_model_name", length = 160)
+    private String llmModelName;
+
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;

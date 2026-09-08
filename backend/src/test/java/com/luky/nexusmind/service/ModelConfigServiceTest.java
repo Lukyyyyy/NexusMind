@@ -65,14 +65,14 @@ class ModelConfigServiceTest {
         return new ModelConfigService.ModelConfigRequest(
                 AiModelOwnerType.USER, AiModelType.EMBEDDING, "embedding", null,
                 "https://example.com", "key", "model", true, false,
-                null, null, null, 2048, batchSize, maxConcurrency, null, null, null);
+                null, null, null, null, 2048, batchSize, maxConcurrency, null, null, null);
     }
 
     private static ModelConfigService.ModelConfigRequest rerankRequest(Integer topN, Double fps) {
         return new ModelConfigService.ModelConfigRequest(
                 AiModelOwnerType.USER, AiModelType.RERANK, "rerank", null,
                 "https://dashscope.aliyuncs.com", "key", "qwen3-vl-rerank", true, false,
-                null, null, null, null, null, null, null, topN, fps);
+                null, null, null, null, null, null, null, null, topN, fps);
     }
 
     @Test

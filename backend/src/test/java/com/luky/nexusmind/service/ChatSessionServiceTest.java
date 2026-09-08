@@ -121,6 +121,20 @@ class ChatSessionServiceTest {
     }
 
     @Test
+    void appendCancelledExchangePersistsPartialResponse() {
+        users.save(user("alice", 1L));
+        ChatSession session = service.createSession("alice");
+
+        service.appendCancelledExchange("alice", session.getId(), "问题", "部分回答", null, 1234L);
+
+        List<ChatMessage> stored = service.getMessages("alice", session.getId());
+        assertEquals("finished", stored.get(0).getStatus());
+        assertEquals("部分回答", stored.get(1).getContent());
+        assertEquals("cancelled", stored.get(1).getStatus());
+        assertEquals(1234L, stored.get(1).getThinkingDurationMs());
+    }
+
+    @Test
     void fallbackTitleRemainsEligibleForLaterGeneratedTitle() {
         users.save(user("alice", 1L));
         ChatSession session = service.createSession("alice");
@@ -426,6 +440,9 @@ class ChatSessionServiceTest {
                 case "findBySessionIdOrderByCreatedAtAsc" -> findAll((Long) args[0]);
                 case "findTop20BySessionIdOrderByCreatedAtDesc" -> findLatest20((Long) args[0]);
                 case "existsBySessionId" -> rows.stream().anyMatch(message -> message.getSession().getId().equals((Long) args[0]));
+                case "existsBySessionIdAndRoleIn" -> rows.stream().anyMatch(message ->
+                        message.getSession().getId().equals((Long) args[0])
+                                && ((List<?>) args[1]).contains(message.getRole()));
                 default -> defaultValue(method.getReturnType());
             });
         }

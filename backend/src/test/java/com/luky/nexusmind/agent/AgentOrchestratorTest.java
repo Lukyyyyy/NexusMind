@@ -5,11 +5,13 @@ import com.luky.nexusmind.client.DeepSeekClient;
 import com.luky.nexusmind.client.GenerationCancellation;
 import com.luky.nexusmind.agent.tool.AgentTool;
 import com.luky.nexusmind.service.AiTraceService;
+import com.luky.nexusmind.service.ModelConfigService;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -34,7 +36,8 @@ class AgentOrchestratorTest {
                         .put("role", "assistant").put("content", "最终回答"), List.of())));
         ToolRegistry tools = new ToolRegistry(List.of(), objectMapper);
 
-        AgentOrchestrator orchestrator = new AgentOrchestrator(client, tools, objectMapper, TRACE, true, 3, 3);
+        AgentOrchestrator orchestrator = new AgentOrchestrator(
+                client, tools, objectMapper, TRACE, modelConfigs(3), true, 3);
         List<AgentEvent> events = new ArrayList<>();
         List<String> chunks = new ArrayList<>();
         orchestrator.run("alice", "有哪些文档？", List.of(),
@@ -71,7 +74,7 @@ class AgentOrchestratorTest {
         };
         AgentOrchestrator orchestrator = new AgentOrchestrator(
                 client, new ToolRegistry(List.of(searchTool), objectMapper), objectMapper,
-                TRACE, true, 3, 3);
+                TRACE, modelConfigs(3), true, 3);
 
         assertThrows(IllegalStateException.class, () -> orchestrator.run(
                 "alice", "深圳今天天气怎么样？", List.of(),
@@ -90,7 +93,7 @@ class AgentOrchestratorTest {
                         objectMapper.createObjectNode().put("role", "assistant"), List.of(call))),
                 List.of("<|DS", "ML|tool_calls>"));
         AgentOrchestrator orchestrator = new AgentOrchestrator(
-                client, new ToolRegistry(List.of(), objectMapper), objectMapper, TRACE, true, 1, 3);
+                client, new ToolRegistry(List.of(), objectMapper), objectMapper, TRACE, modelConfigs(1), true, 3);
         List<AgentEvent> events = new ArrayList<>();
         List<String> chunks = new ArrayList<>();
         List<Throwable> errors = new ArrayList<>();
@@ -134,7 +137,7 @@ class AgentOrchestratorTest {
             }
         };
         AgentOrchestrator orchestrator = new AgentOrchestrator(
-                client, new ToolRegistry(List.of(tool), objectMapper), objectMapper, TRACE, true, 3, 3);
+                client, new ToolRegistry(List.of(tool), objectMapper), objectMapper, TRACE, modelConfigs(3), true, 3);
 
         orchestrator.run("alice", "总结知识库", List.of(),
                 new AgentContext("alice", 1L, "ws-1", "1", List.of(), List.of()),
@@ -149,7 +152,7 @@ class AgentOrchestratorTest {
         ObjectMapper objectMapper = new ObjectMapper();
         StubDeepSeekClient client = new StubDeepSeekClient(List.of());
         AgentOrchestrator orchestrator = new AgentOrchestrator(
-                client, new ToolRegistry(List.of(), objectMapper), objectMapper, TRACE, true, 3, 3);
+                client, new ToolRegistry(List.of(), objectMapper), objectMapper, TRACE, modelConfigs(3), true, 3);
         GenerationCancellation cancellation = new GenerationCancellation();
         cancellation.cancel();
         boolean[] completed = { false };
@@ -163,12 +166,68 @@ class AgentOrchestratorTest {
         assertTrue(completed[0]);
     }
 
+    @Test
+    void enforcesTotalToolBudgetWithoutPublishingRejectedCalls() {
+        ObjectMapper objectMapper = new ObjectMapper();
+        List<ToolCall> calls = List.of(1, 2, 3).stream()
+                .map(index -> new ToolCall("call-" + index, "search_knowledge_base",
+                        objectMapper.createObjectNode().put("query", "query-" + index),
+                        "{\"query\":\"query-" + index + "\"}"))
+                .toList();
+        StubDeepSeekClient client = new StubDeepSeekClient(List.of(new DeepSeekClient.AgentDecision(
+                objectMapper.createObjectNode().put("role", "assistant"), calls)));
+        AtomicInteger executions = new AtomicInteger();
+        AgentTool tool = new AgentTool() {
+            @Override
+            public ToolDefinition definition() {
+                return new ToolDefinition("search_knowledge_base", "search", objectMapper.createObjectNode());
+            }
+
+            @Override
+            public ToolResult execute(String callId, com.fasterxml.jackson.databind.JsonNode arguments,
+                                      AgentContext context) {
+                executions.incrementAndGet();
+                return new ToolResult(callId, definition().name(), objectMapper.createObjectNode(), true, 1);
+            }
+        };
+        List<AgentEvent> events = new ArrayList<>();
+        AgentOrchestrator orchestrator = new AgentOrchestrator(
+                client, new ToolRegistry(List.of(tool), objectMapper), objectMapper,
+                TRACE, modelConfigs(2), true, 6);
+
+        orchestrator.run("alice", "search", List.of(),
+                new AgentContext("alice", 1L, "ws-1", "1", List.of(), List.of()),
+                events::add, chunk -> { }, error -> { }, () -> { });
+
+        assertEquals(2, executions.get());
+        assertEquals(4, events.stream().filter(event -> event.stepId().startsWith("call-")).count());
+        assertTrue(client.lastDecisionMessages.get(0).get("content")
+                .toString().contains("剩余 2 次"));
+        assertTrue(client.lastStreamMessages.stream()
+                .anyMatch(message -> String.valueOf(message.get("content")).contains("TOOL_CALL_LIMIT")));
+    }
+
+    private static ModelConfigService modelConfigs(int maxToolCalls) {
+        return new ModelConfigService(
+                null, null, null, null, null,
+                "", "", "", "", "", "", 1, false, 1, 2048, 30) {
+            @Override
+            public ResolvedModelConfig resolveLlmConfig(String username) {
+                return new ResolvedModelConfig(
+                        1L, null, null, "test", "http://test", null, "test",
+                        null, null, null, maxToolCalls, null, null, null, null, null, null);
+            }
+        };
+    }
+
     private static final class StubDeepSeekClient extends DeepSeekClient {
         private final List<AgentDecision> decisions;
         private final List<String> streamChunks;
         private int decisionIndex;
         private boolean streamCalled;
         private String firstSystemPrompt;
+        private List<Map<String, Object>> lastDecisionMessages;
+        private List<Map<String, Object>> lastStreamMessages;
 
         private StubDeepSeekClient(List<AgentDecision> decisions) {
             this(decisions, List.of("最终回答"));
@@ -189,6 +248,7 @@ class AgentOrchestratorTest {
                                            String conversationId,
                                            GenerationCancellation cancellation) {
             if (firstSystemPrompt == null) firstSystemPrompt = String.valueOf(messages.get(0).get("content"));
+            lastDecisionMessages = List.copyOf(messages);
             return decisions.get(decisionIndex++);
         }
 
@@ -204,6 +264,7 @@ class AgentOrchestratorTest {
                                         Consumer<Throwable> onError,
                                         Runnable onComplete) {
             streamCalled = true;
+            lastStreamMessages = List.copyOf(messages);
             streamChunks.forEach(onChunk);
             onComplete.run();
         }

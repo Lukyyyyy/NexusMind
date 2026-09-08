@@ -24,6 +24,7 @@ class GraphModelSchedulerTest {
                 tokens,
                 null,
                 null,
+                null,
                 concurrency,
                 null,
                 null,

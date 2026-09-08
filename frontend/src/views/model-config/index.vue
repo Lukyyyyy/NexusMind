@@ -37,6 +37,7 @@ const emptyForm = (): Api.ModelConfig.Request => ({
   temperature: 0.3,
   topP: 0.9,
   maxTokens: 16,
+  maxToolCalls: 6,
   dimension: 2048,
   batchSize: 10,
   maxConcurrency: 10,
@@ -161,7 +162,7 @@ const columns: DataTableColumns<Api.ModelConfig.Item> = [
     minWidth: 190,
     render: row =>
       row.modelType === 'LLM'
-        ? `temp ${row.temperature ?? '-'} / top_p ${row.topP ?? '-'} / max ${row.maxTokens == null ? '-' : row.maxTokens / 1024 + 'k'}`
+        ? `temp ${row.temperature ?? '-'} / top_p ${row.topP ?? '-'} / max ${row.maxTokens == null ? '-' : row.maxTokens / 1024 + 'k'} / 工具 ${row.maxToolCalls ?? 6}`
         : row.modelType === 'EMBEDDING'
           ? `维度 ${row.dimension ?? 2048} / batch ${row.batchSize ?? '-'} / 并发 ${row.maxConcurrency ?? '-'}`
           : `窗口 ${row.topN ?? '全局 30'}${row.fps != null ? ` / fps ${row.fps}` : ''}${
@@ -284,6 +285,7 @@ function openEdit(row: Api.ModelConfig.Item) {
     temperature: row.temperature,
     topP: row.topP,
     maxTokens: row.maxTokens == null ? 16 : row.maxTokens / 1024,
+    maxToolCalls: row.maxToolCalls ?? 6,
     dimension: row.dimension ?? 2048,
     batchSize: row.batchSize,
     maxConcurrency: row.maxConcurrency ?? 10,
@@ -328,6 +330,7 @@ function normalizePayload(value: Api.ModelConfig.Request): Api.ModelConfig.Reque
     temperature: value.modelType === 'LLM' ? value.temperature : null,
     topP: value.modelType === 'LLM' ? value.topP : null,
     maxTokens: value.modelType === 'LLM' && value.maxTokens != null ? value.maxTokens * 1024 : null,
+    maxToolCalls: value.modelType === 'LLM' ? value.maxToolCalls : null,
     instruct: value.modelType === 'RERANK' ? value.instruct : null,
     topN: value.modelType === 'RERANK' ? value.topN : null,
     fps: value.modelType === 'RERANK' ? value.fps : null
@@ -538,6 +541,26 @@ onMounted(loadData);
             </NFormItem>
             <NFormItem label="图谱共享并发数">
               <NInputNumber v-model:value="formModel.maxConcurrency" :min="1" :max="30" :precision="0" class="w-full" />
+            </NFormItem>
+            <NFormItem>
+              <template #label>
+                <span class="inline-flex items-center gap-4px">
+                  最大工具调用次数
+                  <NTooltip>
+                    <template #trigger>
+                      <button
+                        type="button"
+                        class="inline-flex cursor-help border-0 bg-transparent p-0 text-#8a8f99"
+                        aria-label="每次回答允许的工具调用总数，修改后仅影响新开始的回答。"
+                      >
+                        <SvgIcon icon="material-symbols:help-outline-rounded" class="text-16px" />
+                      </button>
+                    </template>
+                    <span class="block max-w-280px">每次回答允许的工具调用总数。修改后立即影响新开始的回答，不影响正在进行的回答。</span>
+                  </NTooltip>
+                </span>
+              </template>
+              <NInputNumber v-model:value="formModel.maxToolCalls" :min="1" :max="20" :precision="0" class="w-full" />
             </NFormItem>
           </template>
           <template v-else-if="formModel.modelType === 'EMBEDDING'">

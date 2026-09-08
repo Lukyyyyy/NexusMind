@@ -56,8 +56,21 @@ public class DeepSeekClient {
             Consumer<String> onChunk,
             Consumer<Throwable> onError,
             Runnable onComplete) {
+        streamResponse(userMessage, context, history, modelConfigService.resolveLlmConfig(configUsername), userId,
+                sessionId, conversationId, cancellation, onChunk, onError, onComplete);
+    }
 
-        ModelConfigService.ResolvedModelConfig modelConfig = modelConfigService.resolveLlmConfig(configUsername);
+    public void streamResponse(String userMessage,
+            String context,
+            List<Map<String, String>> history,
+            ModelConfigService.ResolvedModelConfig modelConfig,
+            String userId,
+            String sessionId,
+            String conversationId,
+            GenerationCancellation cancellation,
+            Consumer<String> onChunk,
+            Consumer<Throwable> onError,
+            Runnable onComplete) {
         WebClient webClient = buildWebClient(modelConfig);
         Map<String, Object> request = buildRequest(userMessage, context, history, modelConfig);
         AiTraceService.TraceSpan span = aiTraceService.startSpan(
@@ -138,7 +151,17 @@ public class DeepSeekClient {
                                        String sessionId,
                                        String conversationId,
                                        GenerationCancellation cancellation) {
-        ModelConfigService.ResolvedModelConfig modelConfig = modelConfigService.resolveLlmConfig(configUsername);
+        return callWithTools(modelConfigService.resolveLlmConfig(configUsername), messages, tools, userId,
+                sessionId, conversationId, cancellation);
+    }
+
+    public AgentDecision callWithTools(ModelConfigService.ResolvedModelConfig modelConfig,
+                                       List<Map<String, Object>> messages,
+                                       List<ToolDefinition> tools,
+                                       String userId,
+                                       String sessionId,
+                                       String conversationId,
+                                       GenerationCancellation cancellation) {
         Map<String, Object> request = new java.util.HashMap<>();
         request.put("model", modelConfig.modelName());
         request.put("messages", messages);
@@ -217,7 +240,20 @@ public class DeepSeekClient {
                                     Consumer<String> onChunk,
                                     Consumer<Throwable> onError,
                                     Runnable onComplete) {
-        ModelConfigService.ResolvedModelConfig modelConfig = modelConfigService.resolveLlmConfig(configUsername);
+        streamAgentResponse(modelConfigService.resolveLlmConfig(configUsername), messages, tools, userId,
+                sessionId, conversationId, cancellation, onChunk, onError, onComplete);
+    }
+
+    public void streamAgentResponse(ModelConfigService.ResolvedModelConfig modelConfig,
+                                    List<Map<String, Object>> messages,
+                                    List<ToolDefinition> tools,
+                                    String userId,
+                                    String sessionId,
+                                    String conversationId,
+                                    GenerationCancellation cancellation,
+                                    Consumer<String> onChunk,
+                                    Consumer<Throwable> onError,
+                                    Runnable onComplete) {
         Map<String, Object> request = new java.util.HashMap<>();
         request.put("model", modelConfig.modelName());
         request.put("messages", messages);
@@ -294,8 +330,11 @@ public class DeepSeekClient {
     }
 
     public String generateTitle(String configUsername, String userMessage) {
+        return generateTitle(modelConfigService.resolveLlmConfig(configUsername), userMessage);
+    }
+
+    public String generateTitle(ModelConfigService.ResolvedModelConfig modelConfig, String userMessage) {
         try {
-            ModelConfigService.ResolvedModelConfig modelConfig = modelConfigService.resolveLlmConfig(configUsername);
             WebClient webClient = buildWebClient(modelConfig);
             Map<String, Object> request = new java.util.HashMap<>();
             request.put("model", modelConfig.modelName());

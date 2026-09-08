@@ -25,27 +25,38 @@ public class ChatSessionService {
 
     private static final int MAX_TITLE_LENGTH = 60;
     private static final int MAX_FALLBACK_TITLE_LENGTH = 120;
+    private static final List<String> CONVERSATION_ROLES = List.of("user", "assistant");
 
     private final UserRepository userRepository;
     private final ChatSessionRepository chatSessionRepository;
     private final ChatMessageRepository chatMessageRepository;
     private final ChatHistoryCache chatHistoryCache;
+    private final ModelConfigService modelConfigService;
 
     @Autowired
     public ChatSessionService(UserRepository userRepository,
                               ChatSessionRepository chatSessionRepository,
                               ChatMessageRepository chatMessageRepository,
-                              ChatHistoryCache chatHistoryCache) {
+                              ChatHistoryCache chatHistoryCache,
+                              ModelConfigService modelConfigService) {
         this.userRepository = userRepository;
         this.chatSessionRepository = chatSessionRepository;
         this.chatMessageRepository = chatMessageRepository;
         this.chatHistoryCache = chatHistoryCache;
+        this.modelConfigService = modelConfigService;
     }
 
     public ChatSessionService(UserRepository userRepository,
                               ChatSessionRepository chatSessionRepository,
                               ChatMessageRepository chatMessageRepository) {
-        this(userRepository, chatSessionRepository, chatMessageRepository, ChatHistoryCache.noop());
+        this(userRepository, chatSessionRepository, chatMessageRepository, ChatHistoryCache.noop(), null);
+    }
+
+    public ChatSessionService(UserRepository userRepository,
+                              ChatSessionRepository chatSessionRepository,
+                              ChatMessageRepository chatMessageRepository,
+                              ChatHistoryCache chatHistoryCache) {
+        this(userRepository, chatSessionRepository, chatMessageRepository, chatHistoryCache, null);
     }
 
     @Transactional
@@ -61,14 +72,45 @@ public class ChatSessionService {
         session.setUser(user);
         session.setTitle("新会话");
         session.setTitleGenerated(false);
+        if (modelConfigService != null) applyModel(session, modelConfigService.resolveLlmConfig(username));
         applyScope(session, scope);
         return chatSessionRepository.save(session);
     }
 
     @Transactional
+    public ChatSession changeModel(String username, Long sessionId, Long modelConfigId) {
+        if (modelConfigService == null) throw new IllegalStateException("模型配置服务不可用");
+        ChatSession session = getOwnedActiveSession(username, sessionId);
+        ModelConfigService.ResolvedModelConfig model = modelConfigService.selectLlmConfig(username, modelConfigId);
+        if (java.util.Objects.equals(session.getLlmConfigId(), model.id())) return session;
+        boolean started = chatMessageRepository.existsBySessionIdAndRoleIn(sessionId, CONVERSATION_ROLES);
+        applyModel(session, model);
+        chatSessionRepository.save(session);
+        if (started) chatMessageRepository.save(newMessage(session, "model", model.modelName(), "finished"));
+        return session;
+    }
+
+    @Transactional
+    public ModelConfigService.ResolvedModelConfig resolveSessionModel(String username, ChatSession session) {
+        if (modelConfigService == null) return null;
+        ModelConfigService.ResolvedModelConfig model;
+        try {
+            model = modelConfigService.resolveLlmConfig(username, session.getLlmConfigId());
+        } catch (CustomException ignored) {
+            model = modelConfigService.resolveLlmConfig(username);
+        }
+        if (!java.util.Objects.equals(session.getLlmConfigId(), model.id())
+                || !java.util.Objects.equals(session.getLlmModelName(), model.modelName())) {
+            applyModel(session, model);
+            chatSessionRepository.save(session);
+        }
+        return model;
+    }
+
+    @Transactional
     public ChatSession updateScope(String username, Long sessionId, ChatScopeService.ScopeSelection scope) {
         ChatSession session = getOwnedActiveSession(username, sessionId);
-        if (chatMessageRepository.existsBySessionId(sessionId)) {
+        if (chatMessageRepository.existsBySessionIdAndRoleIn(sessionId, CONVERSATION_ROLES)) {
             throw new CustomException("已有消息的会话不能修改问答范围，请创建新会话", HttpStatus.CONFLICT);
         }
         applyScope(session, scope);
@@ -124,6 +166,7 @@ public class ChatSessionService {
 
         List<ChatMessage> latestMessages = chatMessageRepository.findTop20BySessionIdOrderByCreatedAtDesc(session.getId());
         List<Map<String, String>> history = latestMessages.stream()
+                .filter(message -> "user".equals(message.getRole()) || "assistant".equals(message.getRole()))
                 .sorted(Comparator.comparing(ChatMessage::getCreatedAt))
                 .map(message -> {
                     Map<String, String> item = new HashMap<>();
@@ -164,10 +207,33 @@ public class ChatSessionService {
                                            String generatedTitle,
                                            String agentTrace,
                                            Long thinkingDurationMs) {
+        return appendExchange(username, sessionId, userMessage, assistantResponse, generatedTitle,
+                agentTrace, thinkingDurationMs, "finished");
+    }
+
+    @Transactional
+    public boolean appendCancelledExchange(String username,
+                                           Long sessionId,
+                                           String userMessage,
+                                           String assistantResponse,
+                                           String agentTrace,
+                                           Long thinkingDurationMs) {
+        return appendExchange(username, sessionId, userMessage, assistantResponse, null,
+                agentTrace, thinkingDurationMs, "cancelled");
+    }
+
+    private boolean appendExchange(String username,
+                                   Long sessionId,
+                                   String userMessage,
+                                   String assistantResponse,
+                                   String generatedTitle,
+                                   String agentTrace,
+                                   Long thinkingDurationMs,
+                                   String assistantStatus) {
         ChatSession session = getOwnedActiveSession(username, sessionId);
         boolean wasEmpty = !chatMessageRepository.existsBySessionId(session.getId());
         chatMessageRepository.save(newMessage(session, "user", userMessage, "finished"));
-        ChatMessage assistantMessage = newMessage(session, "assistant", assistantResponse, "finished");
+        ChatMessage assistantMessage = newMessage(session, "assistant", assistantResponse, assistantStatus);
         assistantMessage.setAgentTrace(agentTrace);
         assistantMessage.setThinkingDurationMs(thinkingDurationMs);
         chatMessageRepository.save(assistantMessage);
@@ -220,6 +286,11 @@ public class ChatSessionService {
         session.setScopeValue(scope.value());
         session.setScopeLabel(scope.label());
         session.setScopeDetails(scope.details());
+    }
+
+    private void applyModel(ChatSession session, ModelConfigService.ResolvedModelConfig model) {
+        session.setLlmConfigId(model.id());
+        session.setLlmModelName(model.modelName());
     }
 
     private ChatMessage newMessage(ChatSession session, String role, String content, String status) {

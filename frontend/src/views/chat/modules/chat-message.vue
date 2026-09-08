@@ -99,7 +99,7 @@ watch(
   () => [props.msg.status, traceSteps.value.length] as const,
   ([status, length], previous) => {
     if (!length) return;
-    if (status === 'finished' || status === 'error') {
+    if (status === 'finished' || status === 'cancelled' || status === 'error') {
       traceExpanded.value = false;
     } else if (!previous || previous[1] === 0) {
       traceExpanded.value = true;
@@ -319,6 +319,7 @@ async function handleContentClick(event: MouseEvent) {
               <NText v-else tag="div" class="chat-message__markdown text-4" @click="handleContentClick">
                 <VueMarkdownIt :content="content" />
               </NText>
+              <NText v-if="msg.status === 'cancelled'" depth="3" class="mt-2 block text-13px">已停止生成</NText>
             </div>
             <div class="chat-message__actions justify-start">
               <NButton quaternary size="tiny" aria-label="复制消息" @click="handleCopy(msg.content)">

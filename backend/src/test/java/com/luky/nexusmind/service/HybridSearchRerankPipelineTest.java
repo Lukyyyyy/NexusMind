@@ -23,7 +23,7 @@ class HybridSearchRerankPipelineTest {
         return new ModelConfigService.ResolvedModelConfig(
                 1L, AiModelOwnerType.SYSTEM, AiModelType.RERANK, "rerank",
                 "https://dashscope.aliyuncs.com", "sk-test", "qwen3-vl-rerank",
-                null, null, null, null, null, null,
+                null, null, null, null, null, null, null,
                 null, null, null);
     }
 

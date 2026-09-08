@@ -1,15 +1,16 @@
 <script setup lang="ts">
 import type { NScrollbar } from 'naive-ui';
 import { VueMarkdownItProvider } from 'vue-markdown-shiki';
-import { fetchModelConfigOverview, updateModelPreference } from '@/service/api';
+import { fetchModelConfigOverview } from '@/service/api';
 import ChatMessage from './chat-message.vue';
 import ScopeSelector from './scope-selector.vue';
 
 const chatStore = useChatStore();
-const { input, messages, activeSession, loading, wsStatus, wsData } = storeToRefs(chatStore);
+const { input, messages, activeSession, loading, generatingSessionId, wsStatus, wsData } = storeToRefs(chatStore);
 const scrollbarRef = ref<InstanceType<typeof NScrollbar>>();
 const inputDockRef = ref<HTMLElement>();
 const inputDockHeight = ref(112);
+const stopping = ref(false);
 let inputDockResizeObserver: ResizeObserver | null = null;
 let scrollFrame: number | null = null;
 
@@ -22,14 +23,23 @@ const latestMessage = computed(() => {
   return messages.value[messages.value.length - 1] ?? {};
 });
 
+const displayMessages = computed(() => {
+  const firstConversationMessage = messages.value.findIndex(item => item.role === 'user' || item.role === 'assistant');
+  return messages.value.filter(
+    (item, index) => item.role !== 'model' || (firstConversationMessage >= 0 && index > firstConversationMessage)
+  );
+});
+
 const isSending = computed(() => {
   return (
-    latestMessage.value?.role === 'assistant' && ['loading', 'pending'].includes(latestMessage.value?.status || '')
+    stopping.value
+    || generatingSessionId.value === activeSession.value?.id
+    || (latestMessage.value?.role === 'assistant' && ['loading', 'pending'].includes(latestMessage.value?.status || ''))
   );
 });
 
 const sendable = computed(
-  () => (!input.value.message.trim() && !isSending.value) || ['CLOSED', 'CONNECTING'].includes(wsStatus.value)
+  () => stopping.value || (!input.value.message.trim() && !isSending.value) || ['CLOSED', 'CONNECTING'].includes(wsStatus.value)
 );
 
 const inputRef = ref<HTMLTextAreaElement>();
@@ -42,8 +52,9 @@ const llmConfigs = computed(() =>
   (modelOverview.value?.configs || []).filter(config => config.modelType === 'LLM' && config.enabled)
 );
 const currentModel = computed(() =>
-  llmConfigs.value.find(config => config.id === modelOverview.value?.selectedLlmConfigId)
+  llmConfigs.value.find(config => config.id === (activeSession.value?.modelConfigId ?? modelOverview.value?.selectedLlmConfigId))
 );
+const currentModelName = computed(() => currentModel.value?.modelName || activeSession.value?.modelName || '选择模型');
 const modelOptions = computed(() =>
   llmConfigs.value.map(config => ({
     label: config.modelName,
@@ -69,23 +80,13 @@ async function loadModels() {
 }
 
 async function switchModel(modelId: number) {
-  const overview = modelOverview.value;
-  if (!overview || modelId === overview.selectedLlmConfigId || switchingModel.value) return;
-  if (overview.selectedEmbeddingConfigId == null) {
-    window.$message?.warning('请先在模型配置中选择向量化模型');
-    return;
-  }
+  if (modelId === activeSession.value?.modelConfigId || switchingModel.value || isSending.value) return;
 
   switchingModel.value = true;
-  const { error } = await updateModelPreference({
-    llmConfigId: modelId,
-    embeddingConfigId: overview.selectedEmbeddingConfigId,
-    graphExtractionConfigId: overview.selectedGraphExtractionConfigId,
-    rerankConfigId: overview.selectedRerankConfigId
-  });
-  if (!error) {
-    overview.selectedLlmConfigId = modelId;
-    window.$message?.success(`已切换至 ${currentModel.value?.modelName || '新模型'}`);
+  const session = await chatStore.switchSessionModel(modelId);
+  if (session && modelOverview.value) {
+    modelOverview.value.selectedLlmConfigId = modelId;
+    window.$message?.success(`已切换至 ${session.modelName || '新模型'}`);
   }
   switchingModel.value = false;
 }
@@ -130,7 +131,7 @@ watch(wsData, val => {
   if (data.type === 'stop') return;
   if (data.type === 'agent_step') {
     const assistant = messages.value[messages.value.length - 1];
-    if (!assistant || assistant.role !== 'assistant') return;
+    if (!assistant || assistant.role !== 'assistant' || assistant.status === 'cancelled') return;
     const trace = Array.isArray(assistant.agentTrace) ? assistant.agentTrace : [];
     const index = trace.findIndex(step => step.stepId === data.stepId);
     const nextStep = data as Api.Chat.AgentStep;
@@ -149,10 +150,10 @@ watch(wsData, val => {
     return;
   }
 
-  if (data.type === 'completion' && data.status === 'finished') {
+  if (data.type === 'completion' && ['finished', 'cancelled'].includes(data.status)) {
     if (assistant?.role === 'assistant' && assistant.status !== 'error') {
       finishThinking(assistant);
-      assistant.status = 'finished';
+      assistant.status = data.status;
       if (Array.isArray(assistant.agentTrace)) {
         assistant.agentTrace = assistant.agentTrace.map(step =>
           step.status === 'running' ? { ...step, status: 'completed' as const } : step
@@ -167,7 +168,7 @@ watch(wsData, val => {
     }
     window.$message?.error(data.error);
   } else if (data.chunk) {
-    if (!assistant) return;
+    if (!assistant || assistant.status === 'cancelled') return;
     finishThinking(assistant);
     assistant.status = 'loading';
     assistant.content += data.chunk;
@@ -184,6 +185,7 @@ watch(wsStatus, status => {
 watch(() => [...messages.value], scrollToBottom);
 
 function scrollToBottom() {
+  if (!displayMessages.value.length) return;
   if (scrollFrame != null) return;
   scrollFrame = requestAnimationFrame(() => {
     scrollbarRef.value?.scrollBy({
@@ -195,16 +197,35 @@ function scrollToBottom() {
 }
 
 const handleSend = async () => {
+  if (stopping.value) return;
+
   //  判断是否正在发送, 如果发送中，则停止ai继续响应
   if (isSending.value) {
+    stopping.value = true;
+    const sessionId = activeSession.value?.id;
+    const assistant = messages.value[messages.value.length - 1];
+    const previousStatus = assistant?.status;
+    if (assistant?.role === 'assistant') {
+      finishThinking(assistant);
+      assistant.status = 'cancelled';
+      if (Array.isArray(assistant.agentTrace)) {
+        assistant.agentTrace = assistant.agentTrace.map(step =>
+          step.status === 'running' ? { ...step, status: 'completed' as const } : step
+        );
+      }
+    }
+    generatingSessionId.value = null;
+
     const { error, data } = await request<Api.Chat.Token>({ url: 'chat/websocket-token' });
-    if (error) return;
+    if (error) {
+      if (assistant?.status === 'cancelled') assistant.status = previousStatus;
+      if (sessionId != null) chatStore.startGeneration(sessionId);
+      stopping.value = false;
+      return;
+    }
 
     chatStore.wsSend(JSON.stringify({ type: 'stop', _internal_cmd_token: data.cmdToken }));
-
-    finishThinking(messages.value[messages.value.length - 1]);
-    messages.value[messages.value.length - 1].status = 'finished';
-    if (!latestMessage.value.content) messages.value.pop();
+    stopping.value = false;
     return;
   }
 
@@ -233,6 +254,7 @@ const handleSend = async () => {
     timestamp,
     thinkingStartedAt: Date.now()
   });
+  chatStore.startGeneration(sessionId);
   chatStore.wsSend(
     JSON.stringify({
       type: 'message',
@@ -315,9 +337,14 @@ onUnmounted(() => {
     >
       <NSpin :show="loading">
         <VueMarkdownItProvider>
-          <ChatMessage v-for="(item, index) in messages" :key="item.id || index" :msg="item" />
+          <template v-for="(item, index) in displayMessages" :key="item.id || `${item.role}-${index}`">
+            <div v-if="item.role === 'model'" class="chat-model-change">
+              <span>已切换至 {{ item.content }}</span>
+            </div>
+            <ChatMessage v-else :msg="item" />
+          </template>
         </VueMarkdownItProvider>
-        <section v-if="!messages.length && !loading" class="chat-empty">
+        <section v-if="!displayMessages.length && !loading" class="chat-empty">
           <div class="chat-empty__icon"><icon-solar:chat-round-line-duotone /></div>
           <h1>你好，欢迎使用知枢 NexusMind</h1>
           <p></p>
@@ -360,10 +387,10 @@ onUnmounted(() => {
                 type="button"
                 class="chat-input__model"
                 :disabled="switchingModel || isSending || !modelOptions.length"
-                :title="currentModel?.modelName || '选择模型'"
-                :aria-label="`当前模型：${currentModel?.modelName || '未配置'}，点击切换`"
+                :title="currentModelName"
+                :aria-label="`当前模型：${currentModelName}，点击切换`"
               >
-                <span>{{ currentModel?.modelName || '选择模型' }}</span>
+                <span>{{ currentModelName }}</span>
                 <icon-material-symbols:keyboard-arrow-down-rounded />
               </button>
             </NDropdown>
@@ -390,6 +417,32 @@ onUnmounted(() => {
 </template>
 
 <style scoped lang="scss">
+.chat-model-change {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 18px 0;
+  color: #9ca3af;
+  font-size: 13px;
+
+  &::before,
+  &::after {
+    height: 1px;
+    flex: 1;
+    background: #e5e7eb;
+    content: '';
+  }
+}
+
+:global(.dark) .chat-model-change {
+  color: #6b7280;
+
+  &::before,
+  &::after {
+    background: #30343b;
+  }
+}
+
 .chat-input-dock {
   isolation: isolate;
   background: linear-gradient(to bottom, rgb(255 255 255 / 0%), #fff 28%, #fff 100%);

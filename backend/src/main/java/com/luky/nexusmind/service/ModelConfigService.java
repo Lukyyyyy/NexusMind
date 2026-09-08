@@ -177,6 +177,33 @@ public class ModelConfigService {
     }
 
     @Transactional(readOnly = true)
+    public ResolvedModelConfig resolveLlmConfig(String username, Long configId) {
+        if (configId == null) return resolveLlmConfig(username);
+        User user = requireUser(username);
+        return configRepository.findById(configId)
+                .filter(config -> config.getModelType() == AiModelType.LLM)
+                .filter(AiModelConfig::isEnabled)
+                .filter(config -> canView(user, config))
+                .map(this::toResolved)
+                .orElseThrow(() -> new CustomException("模型不存在、已停用或无权使用", HttpStatus.BAD_REQUEST));
+    }
+
+    @Transactional
+    public ResolvedModelConfig selectLlmConfig(String username, Long configId) {
+        if (configId == null) throw new CustomException("请选择模型", HttpStatus.BAD_REQUEST);
+        User user = requireUser(username);
+        ResolvedModelConfig resolved = resolveLlmConfig(username, configId);
+        UserModelPreference preference = preferenceRepository.findByUserId(user.getId()).orElseGet(() -> {
+            UserModelPreference created = new UserModelPreference();
+            created.setUserId(user.getId());
+            return created;
+        });
+        preference.setLlmConfigId(resolved.id());
+        preferenceRepository.save(preference);
+        return resolved;
+    }
+
+    @Transactional(readOnly = true)
     public ResolvedModelConfig resolveEmbeddingConfig(String username) {
         return resolveConfig(username, AiModelType.EMBEDDING).orElseGet(this::legacyEmbeddingConfig);
     }
@@ -341,6 +368,8 @@ public class ModelConfigService {
         if (request.modelType() == AiModelType.LLM) {
             if (request.maxTokens() != null && (request.maxTokens() < 1))
                 throw new CustomException("maxTokens 必须为正整数", HttpStatus.BAD_REQUEST);
+            if (request.maxToolCalls() != null && (request.maxToolCalls() < 1 || request.maxToolCalls() > 20))
+                throw new CustomException("最大工具调用次数必须在 1 到 20 之间", HttpStatus.BAD_REQUEST);
             if (request.maxConcurrency() != null && (request.maxConcurrency() < 1 || request.maxConcurrency() > 30))
                 throw new CustomException("图谱并发数必须在 1 到 30 之间", HttpStatus.BAD_REQUEST);
         }
@@ -386,6 +415,7 @@ public class ModelConfigService {
         config.setTemperature(request.temperature());
         config.setTopP(request.topP());
         config.setMaxTokens(request.maxTokens());
+        config.setMaxToolCalls(request.modelType() == AiModelType.LLM ? request.maxToolCalls() : null);
         config.setDimension(request.modelType() == AiModelType.EMBEDDING
                 ? REQUIRED_EMBEDDING_DIMENSION
                 : null);
@@ -457,6 +487,7 @@ public class ModelConfigService {
                 config.getTemperature(),
                 config.getTopP(),
                 config.getMaxTokens(),
+                config.getMaxToolCalls(),
                 config.getDimension(),
                 config.getBatchSize(),
                 config.getMaxConcurrency(),
@@ -483,6 +514,7 @@ public class ModelConfigService {
                 null,
                 null,
                 null,
+                null,
                 null);
     }
 
@@ -495,6 +527,7 @@ public class ModelConfigService {
                 normalizeBaseUrl(legacyEmbeddingBaseUrl, AiModelType.EMBEDDING),
                 legacyEmbeddingApiKey,
                 legacyEmbeddingModel,
+                null,
                 null,
                 null,
                 null,
@@ -522,6 +555,7 @@ public class ModelConfigService {
                 config.getTemperature(),
                 config.getTopP(),
                 config.getMaxTokens(),
+                config.getMaxToolCalls(),
                 config.getDimension(),
                 config.getBatchSize(),
                 config.getMaxConcurrency(),
@@ -589,6 +623,7 @@ public class ModelConfigService {
             Double temperature,
             Double topP,
             Integer maxTokens,
+            Integer maxToolCalls,
             Integer dimension,
             Integer batchSize,
             Integer maxConcurrency,
@@ -612,6 +647,7 @@ public class ModelConfigService {
             Double temperature,
             Double topP,
             Integer maxTokens,
+            Integer maxToolCalls,
             Integer dimension,
             Integer batchSize,
             Integer maxConcurrency,
@@ -650,6 +686,7 @@ public class ModelConfigService {
             Double temperature,
             Double topP,
             Integer maxTokens,
+            Integer maxToolCalls,
             Integer dimension,
             Integer batchSize,
             Integer maxConcurrency,

@@ -45,7 +45,7 @@ class KnowledgeGraphExtractionClientTest {
         ModelConfigService configs = mock(ModelConfigService.class);
         when(configs.resolveGraphExtractionConfig("user")).thenReturn(new ModelConfigService.ResolvedModelConfig(
                 1L, null, null, "test", "http://127.0.0.1:" + server.getAddress().getPort(),
-                null, "test-model", null, null, 8192, null, null, null, null, null, null));
+                null, "test-model", null, null, 8192, null, null, null, null, null, null, null));
         client = new KnowledgeGraphExtractionClient(configs, mapper);
     }
 
@@ -63,7 +63,7 @@ class KnowledgeGraphExtractionClientTest {
     void scopesLowReasoningEffortToSupportedModels(String model, boolean supported) throws Exception {
         var config = new ModelConfigService.ResolvedModelConfig(
                 1L, null, null, "test", "http://127.0.0.1:" + server.getAddress().getPort(),
-                null, model, null, null, 16384, null, null, null, null, null, null);
+                null, model, null, null, 16384, null, null, null, null, null, null, null);
         response = envelope("{\"entries\":[]}", "stop");
         client.dictionaryOnce(config, "text", null, false);
         client.dictionaryOnce(config, "text", null, true);
@@ -184,6 +184,7 @@ class KnowledgeGraphExtractionClientTest {
                         null,
                         null,
                         8192,
+                        null,
                         null,
                         null,
                         null,

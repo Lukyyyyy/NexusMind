@@ -8,6 +8,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.luky.nexusmind.client.DeepSeekClient;
 import com.luky.nexusmind.client.GenerationCancellation;
 import com.luky.nexusmind.service.AiTraceService;
+import com.luky.nexusmind.service.ModelConfigService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -49,24 +50,24 @@ public class AgentOrchestrator {
     private final ToolRegistry toolRegistry;
     private final ObjectMapper objectMapper;
     private final AiTraceService aiTraceService;
+    private final ModelConfigService modelConfigService;
     private final boolean enabled;
-    private final int maxToolRounds;
-    private final int maxCallsPerRound;
+    private final int defaultMaxToolCalls;
 
     public AgentOrchestrator(DeepSeekClient deepSeekClient,
                              ToolRegistry toolRegistry,
                              ObjectMapper objectMapper,
                              AiTraceService aiTraceService,
+                             ModelConfigService modelConfigService,
                              @Value("${ai.agent.tool-calling-enabled:true}") boolean enabled,
-                             @Value("${ai.agent.max-tool-rounds:3}") int maxToolRounds,
-                             @Value("${ai.agent.max-calls-per-round:3}") int maxCallsPerRound) {
+                             @Value("${ai.agent.max-tool-calls:6}") int defaultMaxToolCalls) {
         this.deepSeekClient = deepSeekClient;
         this.toolRegistry = toolRegistry;
         this.objectMapper = objectMapper;
         this.aiTraceService = aiTraceService;
+        this.modelConfigService = modelConfigService;
         this.enabled = enabled;
-        this.maxToolRounds = Math.max(1, Math.min(4, maxToolRounds));
-        this.maxCallsPerRound = Math.max(1, Math.min(5, maxCallsPerRound));
+        this.defaultMaxToolCalls = clampToolCallLimit(defaultMaxToolCalls);
     }
 
     public boolean isEnabled() { return enabled; }
@@ -92,37 +93,58 @@ public class AgentOrchestrator {
                     Consumer<String> onChunk,
                     Consumer<Throwable> onError,
                     Runnable onComplete) {
+        run(modelConfigService.resolveLlmConfig(configUsername), userMessage, history, context, cancellation,
+                onEvent, onChunk, onError, onComplete);
+    }
+
+    public void run(ModelConfigService.ResolvedModelConfig modelConfig,
+                    String userMessage,
+                    List<Map<String, String>> history,
+                    AgentContext context,
+                    GenerationCancellation cancellation,
+                    Consumer<AgentEvent> onEvent,
+                    Consumer<String> onChunk,
+                    Consumer<Throwable> onError,
+                    Runnable onComplete) {
         List<Map<String, Object>> messages = initialMessages(history, userMessage);
         Set<String> executedCalls = new HashSet<>();
         DeepSeekClient.AgentDecision finalDecision = null;
         int roundsWithoutNewSources = 0;
+        int requestedToolCalls = 0;
+        // 每次回答开始时快照配置，避免编辑模型配置改变正在进行的 Agent 行为。
+        Integer configuredLimit = modelConfig.maxToolCalls();
+        int maxToolCalls = clampToolCallLimit(configuredLimit != null ? configuredLimit : defaultMaxToolCalls);
         if (finishIfCancelled(cancellation, onComplete)) return;
         onEvent.accept(AgentEvent.thinking());
 
-        for (int round = 0; round < maxToolRounds; round++) {
+        while (requestedToolCalls < maxToolCalls) {
             if (finishIfCancelled(cancellation, onComplete)) return;
             DeepSeekClient.AgentDecision decision;
             try {
                 decision = deepSeekClient.callWithTools(
-                        configUsername, messages, toolRegistry.definitions(), context.traceUserId(),
+                        modelConfig, withToolBudget(messages, maxToolCalls, requestedToolCalls),
+                        toolRegistry.definitions(), context.traceUserId(),
                         context.websocketSessionId(), String.valueOf(context.chatSessionId()), cancellation);
             } catch (CancellationException ignored) {
                 onComplete.run();
                 return;
             }
             if (finishIfCancelled(cancellation, onComplete)) return;
-            if (round == 0) onEvent.accept(AgentEvent.thinkingCompleted(!decision.toolCalls().isEmpty()));
+            if (requestedToolCalls == 0) onEvent.accept(AgentEvent.thinkingCompleted(!decision.toolCalls().isEmpty()));
             if (decision.toolCalls().isEmpty()) {
                 finalDecision = decision;
                 break;
             }
 
             messages.add(objectMapper.convertValue(decision.assistantMessage(), new TypeReference<>() {}));
-            int callsThisRound = 0;
             int executedThisRound = 0;
             int sourcesBeforeRound = context.allowedSourceCount();
             for (ToolCall call : decision.toolCalls()) {
                 if (finishIfCancelled(cancellation, onComplete)) return;
+                if (requestedToolCalls++ >= maxToolCalls) {
+                    addToolMessage(messages, call, limitedResult(call));
+                    continue;
+                }
                 onEvent.accept(AgentEvent.toolStarted(call));
                 AiTraceService.TraceSpan toolSpan = aiTraceService.startSpan(
                         "agent.tool.execute", context.traceUserId(), null, null)
@@ -132,9 +154,7 @@ public class AgentOrchestrator {
                 ToolResult result;
                 long durationMs;
                 try {
-                    if (callsThisRound++ >= maxCallsPerRound) {
-                        result = limitedResult(call);
-                    } else if (!executedCalls.add(call.name() + ":" + call.rawArguments())) {
+                    if (!executedCalls.add(call.name() + ":" + call.rawArguments())) {
                         result = duplicateResult(call);
                     } else {
                         executedThisRound++;
@@ -160,14 +180,10 @@ public class AgentOrchestrator {
                 }
                 if (finishIfCancelled(cancellation, onComplete)) return;
                 onEvent.accept(AgentEvent.toolCompleted(call, result.resultCount(), durationMs, result.success()));
-                Map<String, Object> toolMessage = new LinkedHashMap<>();
-                toolMessage.put("role", "tool");
-                toolMessage.put("tool_call_id", call.id());
-                toolMessage.put("name", call.name());
-                toolMessage.put("content", result.content().toString());
-                messages.add(toolMessage);
+                addToolMessage(messages, call, result);
             }
 
+            if (requestedToolCalls >= maxToolCalls) break;
             if (executedThisRound == 0) break;
             if (context.allowedSourceCount() == sourcesBeforeRound) {
                 roundsWithoutNewSources++;
@@ -185,7 +201,7 @@ public class AgentOrchestrator {
         StreamingProtocolGuard guard = new StreamingProtocolGuard(
                 toolRegistry.definitions().stream().map(ToolDefinition::name).toList(), onChunk, onError);
         deepSeekClient.streamAgentResponse(
-                configUsername, messages, toolRegistry.definitions(), context.traceUserId(),
+                modelConfig, messages, toolRegistry.definitions(), context.traceUserId(),
                 context.websocketSessionId(), String.valueOf(context.chatSessionId()),
                 cancellation, guard::accept, onError,
                 () -> {
@@ -210,6 +226,30 @@ public class AgentOrchestrator {
         return messages;
     }
 
+    private List<Map<String, Object>> withToolBudget(List<Map<String, Object>> messages, int limit, int used) {
+        List<Map<String, Object>> decisionMessages = new ArrayList<>(messages);
+        Map<String, Object> systemMessage = new LinkedHashMap<>(decisionMessages.get(0));
+        systemMessage.put("content", systemMessage.get("content") + "\n\n" + String.format(
+                "工具调用额度由系统精确计数：本次回答最多 %d 次，已请求 %d 次，剩余 %d 次。"
+                        + "本次返回的 tool_calls 数量不得超过剩余额度；额度用完后根据已有资料回答。",
+                limit, used, limit - used));
+        decisionMessages.set(0, systemMessage);
+        return decisionMessages;
+    }
+
+    private void addToolMessage(List<Map<String, Object>> messages, ToolCall call, ToolResult result) {
+        Map<String, Object> toolMessage = new LinkedHashMap<>();
+        toolMessage.put("role", "tool");
+        toolMessage.put("tool_call_id", call.id());
+        toolMessage.put("name", call.name());
+        toolMessage.put("content", result.content().toString());
+        messages.add(toolMessage);
+    }
+
+    private static int clampToolCallLimit(int value) {
+        return Math.max(1, Math.min(20, value));
+    }
+
     private ToolResult duplicateResult(ToolCall call) {
         var content = objectMapper.createObjectNode();
         content.put("status", "error");
@@ -222,8 +262,8 @@ public class AgentOrchestrator {
     private ToolResult limitedResult(ToolCall call) {
         var content = objectMapper.createObjectNode();
         content.put("status", "error");
-        content.put("code", "ROUND_CALL_LIMIT");
-        content.put("message", "本轮工具调用数量超过限制");
+        content.put("code", "TOOL_CALL_LIMIT");
+        content.put("message", "本次回答的工具调用额度已用完，请使用已有结果回答");
         return new ToolResult(call.id(), call.name(), content, false, 0);
     }
 

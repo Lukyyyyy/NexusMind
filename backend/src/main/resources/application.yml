@@ -228,8 +228,7 @@ ai:
     rerank-timeout-ms: ${AI_RETRIEVAL_RERANK_TIMEOUT_MS:8000} # rerank 超时后保持融合原序（留足模型冷启动余量）
   agent:
     tool-calling-enabled: ${AI_AGENT_TOOL_CALLING_ENABLED:true}
-    max-tool-rounds: ${AI_AGENT_MAX_TOOL_ROUNDS:3}
-    max-calls-per-round: ${AI_AGENT_MAX_CALLS_PER_ROUND:3}
+    max-tool-calls: ${AI_AGENT_MAX_TOOL_CALLS:6}
   prompt:
     rules: |
       你是知枢知识助手，须遵守：
