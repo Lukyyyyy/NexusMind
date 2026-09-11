@@ -28,6 +28,15 @@ class FakeWorker:
         return SimpleNamespace(content=b'{"markdown":"ok"}', status_code=200, headers={"content-type":"application/json"})
     async def stop(self):
         self.stops += 1
+    def was_oom_killed(self):
+        return False
+
+
+class FakeOomWorker(FakeWorker):
+    async def parse(self, body, content_type):
+        raise RuntimeError("worker exited")
+    def was_oom_killed(self):
+        return True
 
 
 class CancellationTests(unittest.IsolatedAsyncioTestCase):
@@ -44,6 +53,7 @@ class CancellationTests(unittest.IsolatedAsyncioTestCase):
         response = await parse_request(worker, Request())
         self.assertEqual(response.status_code, 200)
         self.assertEqual(worker.calls, 2)
+        self.assertEqual(worker.stops, 2)
 
     async def test_cancel_queued_request_does_not_stop_active_worker(self):
         worker = FakeWorker()
@@ -57,6 +67,7 @@ class CancellationTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(worker.lock.locked())
         worker.result.set()
         await active
+        self.assertEqual(worker.stops, 1)
         self.assertFalse(worker.lock.locked())
 
     async def test_cancel_handler_releases_worker_and_lock(self):
@@ -78,6 +89,12 @@ class CancellationTests(unittest.IsolatedAsyncioTestCase):
         await worker.close()
         self.assertIsNotNone(process.returncode)
         self.assertIsNone(worker.output)
+
+    async def test_oom_is_reported_and_worker_is_stopped(self):
+        worker = FakeOomWorker()
+        response = await parse_request(worker, Request())
+        self.assertEqual(response.status_code, 507)
+        self.assertEqual(worker.stops, 1)
 
 
 if __name__ == "__main__":

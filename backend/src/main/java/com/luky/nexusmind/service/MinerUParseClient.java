@@ -91,6 +91,9 @@ public class MinerUParseClient {
                     String.class
             )));
         } catch (HttpStatusCodeException e) {
+            if (e.getStatusCode().value() == 507) {
+                throw new MinerUOutOfMemoryException("MinerU解析超出可用内存" + formatErrorBody(e.getResponseBodyAsString()), e);
+            }
             throw new IOException("MinerU parse service returned " + e.getStatusCode() + formatErrorBody(e.getResponseBodyAsString()), e);
         }
 
@@ -200,6 +203,12 @@ public class MinerUParseClient {
         @Override
         public String getFilename() {
             return filename;
+        }
+    }
+
+    public static class MinerUOutOfMemoryException extends IOException {
+        public MinerUOutOfMemoryException(String message, Throwable cause) {
+            super(message, cause);
         }
     }
 }

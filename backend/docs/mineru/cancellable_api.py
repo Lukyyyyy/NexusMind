@@ -1,7 +1,8 @@
-"""Synchronous MinerU gateway: one isolated worker, terminated on client disconnect.
+"""Synchronous MinerU gateway: one isolated worker per request.
 
-The public API stays alive. Only the worker owning the cancelled request is stopped;
-waiting requests never stop another request's worker. Model files stay cached on disk.
+The public API stays alive. Each completed, failed, or cancelled request stops its
+worker process group; waiting requests never stop another request's worker. Model
+files stay cached on disk.
 """
 import asyncio
 import contextlib
@@ -76,6 +77,9 @@ class Worker:
             headers={"content-type": content_type}
         )
 
+    def was_oom_killed(self):
+        return self.process is not None and self.process.returncode == -signal.SIGKILL
+
     async def close(self):
         await self.stop()
         await self.client.aclose()
@@ -105,7 +109,6 @@ async def parse_request(worker, request):
             job.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await job
-            await worker.stop()
             return Response(status_code=499)
         result = await job
         return Response(content=result.content, status_code=result.status_code,
@@ -116,13 +119,13 @@ async def parse_request(worker, request):
                 job.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await job
-            await worker.stop()
         raise
     except Exception:
         log.exception("Parsing worker failed")
-        if acquired:
-            await worker.stop()
-        return Response(content='{"detail":"MinerU parsing worker failed"}', status_code=502,
+        status_code = 507 if worker.was_oom_killed() else 502
+        detail = "MinerU parsing worker was killed (likely out of memory)" if status_code == 507 \
+            else "MinerU parsing worker failed"
+        return Response(content=f'{{"detail":"{detail}"}}', status_code=status_code,
                         media_type="application/json")
     finally:
         watch.cancel()
@@ -134,7 +137,10 @@ async def parse_request(worker, request):
                 await acquisition
         # The lock may have been granted in the same tick as a queued disconnect.
         if acquired or (acquisition.done() and not acquisition.cancelled() and acquisition.exception() is None):
-            worker.lock.release()
+            try:
+                await worker.stop()
+            finally:
+                worker.lock.release()
 
 
 worker = Worker()
@@ -142,7 +148,6 @@ worker = Worker()
 
 @asynccontextmanager
 async def lifespan(app):
-    await worker.start()
     try:
         yield
     finally:

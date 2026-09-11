@@ -83,4 +83,16 @@ class MinerUParseClientTest {
                 exception.getMessage());
         server.verify();
     }
+
+    @Test
+    void parseToTextMarksOutOfMemoryAsNonGenericFailure() {
+        server.expect(requestTo("http://mineru.test/file_parse"))
+                .andRespond(withStatus(HttpStatus.INSUFFICIENT_STORAGE)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .body("{\"detail\":\"worker was killed\"}"));
+
+        assertThrows(MinerUParseClient.MinerUOutOfMemoryException.class,
+                () -> client.parseToText("%PDF".getBytes(), "test.pdf"));
+        server.verify();
+    }
 }

@@ -2,6 +2,7 @@ package com.luky.nexusmind.config;
 
 import com.luky.nexusmind.model.FileProcessingTask;
 import com.luky.nexusmind.service.FileProcessingStatusService;
+import com.luky.nexusmind.service.MinerUParseClient;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.common.serialization.StringDeserializer;
@@ -117,6 +118,7 @@ public class KafkaConfig {
 
         // 固定退避策略：每 3 秒重试一次，最多重试 4 次（加首次共 5 次）
         DefaultErrorHandler errorHandler = new DefaultErrorHandler(recoverer, new FixedBackOff(3000L, 4));
+        errorHandler.addNotRetryableExceptions(MinerUParseClient.MinerUOutOfMemoryException.class);
 
         ConcurrentKafkaListenerContainerFactory<String, Object> factory = new ConcurrentKafkaListenerContainerFactory<>();
         factory.setConsumerFactory(consumerFactory);
