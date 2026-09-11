@@ -65,19 +65,23 @@ function close() {
 
 const store = useKnowledgeBaseStore();
 async function handleSubmit() {
-  await validate();
-  if (model.value.graphEnabled && model.value.graphPromptTemplateId == null) {
-    window.$message?.warning('请选择图谱抽取模板');
-    return;
-  }
-  if (model.value.graphEnabled && (!Number.isInteger(model.value.graphBatchChars) || model.value.graphBatchChars < model.value.chunkSize)) {
-    window.$message?.warning('图谱批次大小不得低于切片大小');
-    return;
-  }
+  if (loading.value) return;
   loading.value = true;
-  await store.enqueueUpload(model.value);
-  loading.value = false;
-  close();
+  try {
+    await validate();
+    if (model.value.graphEnabled && model.value.graphPromptTemplateId == null) {
+      window.$message?.warning('请选择图谱抽取模板');
+      return;
+    }
+    if (model.value.graphEnabled && (!Number.isInteger(model.value.graphBatchChars) || model.value.graphBatchChars < model.value.chunkSize)) {
+      window.$message?.warning('图谱批次大小不得低于切片大小');
+      return;
+    }
+    await store.enqueueUpload(model.value);
+    close();
+  } finally {
+    loading.value = false;
+  }
 }
 
 watch(visible, async () => {
@@ -223,7 +227,7 @@ function onUpdate(option: unknown) {
     <template #action>
       <NSpace :size="16">
         <NButton @click="close">取消</NButton>
-        <NButton type="primary" @click="handleSubmit">保存</NButton>
+        <NButton type="primary" :loading="loading" @click="handleSubmit">保存</NButton>
       </NSpace>
     </template>
   </NModal>

@@ -291,7 +291,7 @@ const {
       width: 170,
       sorter: true,
       sortOrder: sortState.value.columnKey === 'createdAt' ? sortState.value.order : false,
-      render: row => dayjs(row.createdAt).format('YYYY-MM-DD HH:mm:ss')
+      render: row => (row.createdAt ? dayjs(row.createdAt).format('YYYY-MM-DD HH:mm:ss') : '-')
     },
     {
       key: 'operate',
