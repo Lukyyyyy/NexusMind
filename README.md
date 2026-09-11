@@ -81,27 +81,45 @@ cp .env.example .env.local
 一键启动开发环境：
 
 ```bash
-./scripts/start-dev.sh
+./scripts/start.sh dev
 ```
 
 该脚本会启动 Docker 中间件，并同时启动后端和前端。
 
+使用 Homebrew 中间件时：
+
+```bash
+./scripts/start.sh dev --infra=homebrew
+```
+
+跳过中间件启动、直接使用已经运行的服务：
+
+```bash
+./scripts/start.sh dev --infra=none
+```
+
 只启动中间件：
 
 ```bash
-./scripts/start-infra.sh
+./scripts/start.sh infra
+```
+
+只启动 Homebrew 中间件：
+
+```bash
+./scripts/start.sh infra homebrew
 ```
 
 只启动后端：
 
 ```bash
-./scripts/start-backend.sh
+./scripts/start.sh backend
 ```
 
 只启动前端：
 
 ```bash
-./scripts/start-frontend.sh
+./scripts/start.sh frontend
 ```
 
 后端默认端口为 `18081`，前端测试环境默认请求 `http://localhost:18081/api/v1`。
