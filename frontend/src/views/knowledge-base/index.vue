@@ -123,12 +123,18 @@ function getFileActionOptions(row: Api.KnowledgeBase.UploadTask): DropdownOption
       key: 'graph',
       disabled: row.status !== UploadStatus.Completed
     },
-    {
-      label: deletingFiles.value.has(row.fileMd5) ? '正在删除' : '删除文件',
-      key: 'delete',
-      disabled: deletingFiles.value.has(row.fileMd5)
-    }
+    ...(canDeleteFile(row)
+      ? [{
+          label: deletingFiles.value.has(row.fileMd5) ? '正在删除' : '删除文件',
+          key: 'delete',
+          disabled: deletingFiles.value.has(row.fileMd5)
+        }]
+      : [])
   ];
+}
+
+function canDeleteFile(row: Api.KnowledgeBase.UploadTask) {
+  return authStore.isSuperAdmin || String(row.userId) === String(authStore.userInfo.id);
 }
 
 function handleFileAction(key: string, row: Api.KnowledgeBase.UploadTask) {

@@ -14,6 +14,7 @@ import jakarta.servlet.http.HttpServletResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
@@ -117,7 +118,7 @@ public class OrgTagAuthorizationFilter extends OncePerRequestFilter {
                 String token = extractToken(request);
                 if (token != null) {
                     String userId = jwtUtils.extractUserIdFromToken(token);
-                    String role = jwtUtils.extractRoleFromToken(token);
+                    String role = currentRole();
                     String orgTags = jwtUtils.extractOrgTagsFromToken(token);
                     if (userId != null) {
                         request.setAttribute("userId", userId);
@@ -177,7 +178,7 @@ public class OrgTagAuthorizationFilter extends OncePerRequestFilter {
 
                 String username = jwtUtils.extractUsernameFromToken(token);
                 String authenticatedUserId = jwtUtils.extractUserIdFromToken(token);
-                String role = jwtUtils.extractRoleFromToken(token);
+                String role = currentRole();
                 boolean owner = resourceInfo.getOwner().equals(username)
                         || resourceInfo.getOwner().equals(authenticatedUserId);
                 if (owner || "SUPER_ADMIN".equals(role)) {
@@ -216,7 +217,7 @@ public class OrgTagAuthorizationFilter extends OncePerRequestFilter {
             
             // 获取用户名和角色
             String username = jwtUtils.extractUsernameFromToken(token);
-            String role = jwtUtils.extractRoleFromToken(token);
+            String role = currentRole();
             
             // 如果是资源拥有者，直接放行
             if (username != null && username.equals(resourceInfo.getOwner())) {
@@ -252,6 +253,17 @@ public class OrgTagAuthorizationFilter extends OncePerRequestFilter {
             logger.error("组织标签授权过滤器发生错误: {}", e.getMessage(), e);
             response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
         }
+    }
+
+    private String currentRole() {
+        var authentication = SecurityContextHolder.getContext().getAuthentication();
+        if (authentication == null) return null;
+        Set<String> authorities = authentication.getAuthorities().stream()
+                .map(authority -> authority.getAuthority())
+                .collect(Collectors.toSet());
+        if (authorities.contains("ROLE_SUPER_ADMIN")) return "SUPER_ADMIN";
+        if (authorities.contains("ROLE_ADMIN")) return "ADMIN";
+        return authorities.contains("ROLE_USER") ? "USER" : null;
     }
     
     /**
