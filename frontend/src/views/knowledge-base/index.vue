@@ -118,12 +118,14 @@ function getFileActionOptions(row: Api.KnowledgeBase.UploadTask): DropdownOption
       key: 'chunks',
       disabled: row.status !== UploadStatus.Completed
     },
-    {
-      label: graphActionLabel(row),
-      key: 'graph',
-      disabled: row.status !== UploadStatus.Completed
-    },
-    ...(canDeleteFile(row)
+    ...(canManageFile(row)
+      ? [{
+          label: graphActionLabel(row),
+          key: 'graph',
+          disabled: row.status !== UploadStatus.Completed
+        }]
+      : []),
+    ...(canManageFile(row)
       ? [{
           label: deletingFiles.value.has(row.fileMd5) ? '正在删除' : '删除文件',
           key: 'delete',
@@ -133,7 +135,7 @@ function getFileActionOptions(row: Api.KnowledgeBase.UploadTask): DropdownOption
   ];
 }
 
-function canDeleteFile(row: Api.KnowledgeBase.UploadTask) {
+function canManageFile(row: Api.KnowledgeBase.UploadTask) {
   return authStore.isSuperAdmin || String(row.userId) === String(authStore.userInfo.id);
 }
 

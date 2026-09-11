@@ -8,11 +8,48 @@ import com.luky.nexusmind.repository.FileUploadRepository;
 import com.luky.nexusmind.repository.GraphCandidateRepository;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
+import org.springframework.http.HttpStatus;
 
 import java.util.List;
 import java.util.Optional;
 
 class KnowledgeGraphServiceTest {
+    @ParameterizedTest
+    @ValueSource(strings = {"USER", "ADMIN"})
+    void onlyOwnerOrSuperAdminCanManageDocumentGraph(String role) {
+        var files = mock(FileUploadRepository.class);
+        var service = new KnowledgeGraphService(files, mock(GraphCandidateRepository.class),
+                mock(KnowledgeGraphStoreService.class), mock(KnowledgeGraphExtractionService.class),
+                mock(GraphPromptTemplateService.class));
+
+        var error = org.junit.jupiter.api.Assertions.assertThrows(
+                com.luky.nexusmind.exception.CustomException.class,
+                () -> service.get("abc", "other-user", role));
+
+        assertEquals(HttpStatus.FORBIDDEN, error.getStatus());
+        verify(files, never()).findByFileMd5("abc");
+    }
+
+    @Test
+    void superAdminCanManageAnotherUsersDocumentGraph() {
+        var files = mock(FileUploadRepository.class);
+        var candidates = mock(GraphCandidateRepository.class);
+        var store = mock(KnowledgeGraphStoreService.class);
+        var templates = mock(GraphPromptTemplateService.class);
+        var file = file("owner", "default", false);
+        file.setId(7L);
+        file.setFileMd5("abc");
+        when(files.findByFileMd5("abc")).thenReturn(Optional.of(file));
+        when(candidates.findByFileUploadIdOrderByEvidenceChunkIdAscIdAsc(7L)).thenReturn(List.of());
+        when(templates.resolve(null)).thenReturn(new GraphPromptTemplateService.ResolvedTemplate(1L, "通用", ""));
+        var service = new KnowledgeGraphService(files, candidates, store,
+                mock(KnowledgeGraphExtractionService.class), templates);
+
+        assertEquals("abc", service.get("abc", "root", "SUPER_ADMIN").fileMd5());
+    }
+
     @Test
     void publishWritesOnlySelectedCandidatesAndMarksReviewComplete() {
         FileUploadRepository files = mock(FileUploadRepository.class);

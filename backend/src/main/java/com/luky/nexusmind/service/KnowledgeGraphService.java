@@ -212,7 +212,7 @@ public class KnowledgeGraphService {
         boolean write =
                 TransactionSynchronizationManager.isActualTransactionActive()
                         && !TransactionSynchronizationManager.isCurrentTransactionReadOnly();
-        if ("ADMIN".equals(role) || "SUPER_ADMIN".equals(role)) {
+        if ("SUPER_ADMIN".equals(role)) {
             return (write
                             ? fileUploadRepository.lockByMd5(fileMd5)
                             : fileUploadRepository.findByFileMd5(fileMd5))
@@ -221,7 +221,7 @@ public class KnowledgeGraphService {
         return (write
                         ? fileUploadRepository.lockByMd5AndOwner(fileMd5, userId)
                         : fileUploadRepository.findByFileMd5AndUserId(fileMd5, userId))
-                .orElseThrow(() -> new CustomException("只有上传者或管理员可以管理图谱", HttpStatus.FORBIDDEN));
+                .orElseThrow(() -> new CustomException("只有上传者或超级管理员可以管理图谱", HttpStatus.FORBIDDEN));
     }
 
     private DocumentGraphResponse response(FileUpload file) {
