@@ -119,11 +119,11 @@ public class OrgTagAuthorizationFilter extends OncePerRequestFilter {
                 if (token != null) {
                     String userId = jwtUtils.extractUserIdFromToken(token);
                     String role = currentRole();
-                    String orgTags = jwtUtils.extractOrgTagsFromToken(token);
                     if (userId != null) {
                         request.setAttribute("userId", userId);
                         request.setAttribute("role", role);
-                        request.setAttribute("orgTags", orgTags);
+                        // 组织可见性由 DocumentService 按服务端成员实时计算，不再透传 JWT 声明。
+                        request.setAttribute("orgTags", "");
                         logger.debug("为{}请求设置userId属性: {}, role: {}", operation, userId, role);
                     } else {
                         logger.warn("{}请求中无法从token提取userId", operation);
@@ -233,14 +233,15 @@ public class OrgTagAuthorizationFilter extends OncePerRequestFilter {
                 return;
             }
             
-            // 获取用户的组织标签
-            String userOrgTags = jwtUtils.extractOrgTagsFromToken(token);
+            // 组织成员走服务端实时查询，不信任 JWT 内的 orgTags 声明，避免移出组织后旧 token 继续放行。
+            String userOrgTags = username == null ? null
+                    : userRepository.findByUsername(username).map(user -> user.getOrgTags()).orElse(null);
             if (userOrgTags == null || userOrgTags.isEmpty()) {
                 logger.debug("用户没有组织标签，拒绝访问");
                 response.setStatus(HttpServletResponse.SC_FORBIDDEN);
                 return;
             }
-            
+
             // 检查用户是否有权限访问该资源
             if (isUserAuthorized(userOrgTags, resourceOrgTag)) {
                 logger.debug("用户有访问权限，放行请求");

@@ -15,6 +15,8 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * 自定义的过滤器，用于解析请求头中的 JWT Token，并验证用户身份。
@@ -22,6 +24,8 @@ import java.io.IOException;
  */
 @Component
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
+
+    private static final Logger logger = LoggerFactory.getLogger(JwtAuthenticationFilter.class);
 
     @Autowired
     private JwtUtils jwtUtils; // 用于生成和解析 JWT Token
@@ -61,7 +65,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                     if (jwtUtils.shouldRefreshToken(token)) {
                         newToken = jwtUtils.refreshToken(token);
                         if (newToken != null) {
-                            logger.info("Token auto-refreshed proactively");
+                            logger.debug("Token auto-refreshed proactively");
                         }
                     }
                     username = jwtUtils.extractUsernameFromToken(token);
@@ -70,7 +74,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                     if (jwtUtils.canRefreshExpiredToken(token)) {
                         newToken = jwtUtils.refreshToken(token);
                         if (newToken != null) {
-                            logger.info("Expired token refreshed within grace period");
+                            logger.debug("Expired token refreshed within grace period");
                             username = jwtUtils.extractUsernameFromToken(newToken);
                         }
                     }
@@ -91,9 +95,14 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                 }
             }
             filterChain.doFilter(request, response); // 继续执行过滤链
+        } catch (org.springframework.security.core.userdetails.UsernameNotFoundException e) {
+            logger.debug("Unknown user in Authorization header");
+            SecurityContextHolder.clearContext();
+            response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
         } catch (Exception e) {
-            // 记录错误日志
-            logger.error("Cannot set user authentication: {}", e);
+            logger.debug("Failed to set user authentication", e);
+            SecurityContextHolder.clearContext();
+            response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
         }
     }
 

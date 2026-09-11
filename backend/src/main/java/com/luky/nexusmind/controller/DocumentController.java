@@ -15,7 +15,6 @@ import com.luky.nexusmind.service.ElasticsearchService;
 import com.luky.nexusmind.service.FileProcessingStatusService;
 import com.luky.nexusmind.service.ProcessingStatusEventService;
 import com.luky.nexusmind.utils.LogUtils;
-import com.luky.nexusmind.utils.JwtUtils;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.io.InputStreamResource;
 import org.springframework.http.HttpHeaders;
@@ -70,9 +69,6 @@ public class DocumentController {
     @Autowired
     private UserRepository userRepository;
     
-    @Autowired
-    private JwtUtils jwtUtils;
-
     /**
      * 删除文档及其相关数据
      * 
@@ -432,7 +428,13 @@ public class DocumentController {
             @RequestAttribute("orgTags") String orgTags) {
         try {
             InputStream stream = documentService.openParsedAsset(fileMd5, name, userId, orgTags);
-            String type = name.endsWith(".jpg") ? "image/jpeg" : "image/" + name.substring(name.lastIndexOf('.') + 1);
+            String type = switch (name.substring(name.lastIndexOf('.') + 1).toLowerCase()) {
+                case "png" -> "image/png";
+                case "jpg" -> "image/jpeg";
+                case "webp" -> "image/webp";
+                case "gif" -> "image/gif";
+                default -> "application/octet-stream";
+            };
             return ResponseEntity.ok().contentType(MediaType.parseMediaType(type))
                     .header(HttpHeaders.CACHE_CONTROL, "private, no-store")
                     .header("X-Content-Type-Options", "nosniff")
@@ -464,6 +466,27 @@ public class DocumentController {
         }
     }
     
+
+    /**
+     * 仅信任 Security 过滤器已验证的登录态；URL 查询参数不再接受 JWT。
+     * 组织可见性走服务端实时成员关系，不信任 token 内的 orgTags 声明。
+     */
+    private String authenticatedUsername() {
+        var authentication = SecurityContextHolder.getContext().getAuthentication();
+        if (authentication == null || !authentication.isAuthenticated()
+                || !(authentication.getPrincipal() instanceof UserDetails userDetails)) {
+            return null;
+        }
+        return userDetails.getUsername();
+    }
+
+    private boolean validSession(String username) {
+        if (username == null) {
+            return false;
+        }
+        return userRepository.findByUsername(username).map(user -> user.isEnabled()).orElse(false);
+    }
+
     /**
      * 下载票据仅在用户通过原下载接口的文件权限检查后签发。
      * 浏览器无需接触 MinIO 地址或把登录 JWT 放入下载链接。
@@ -479,7 +502,7 @@ public class DocumentController {
             return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
         }
         try {
-            InputStream stream = documentService.openFileStream(file.get().getFileName());
+            InputStream stream = documentService.openFileStream(fileMd5.get(), file.get().getFileName());
             return ResponseEntity.ok()
                     .contentType(MediaType.APPLICATION_OCTET_STREAM)
                     .header(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.attachment()
@@ -496,32 +519,16 @@ public class DocumentController {
 
     @GetMapping("/download")
     public ResponseEntity<?> downloadFileByName(
-            @RequestParam String fileName,
-            @RequestParam(required = false) String token,
-            @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization) {
-        
+            @RequestParam String fileName) {
+
         LogUtils.PerformanceMonitor monitor = LogUtils.startPerformanceMonitor("DOWNLOAD_FILE_BY_NAME");
         try {
-            String resolvedToken = resolveToken(token, authorization);
-            // 验证token并获取用户信息
-            String userId = null;
-            String orgTags = null;
-            
-            if (resolvedToken != null) {
-                try {
-                    // 解析JWT token获取用户信息
-                    // 注意：JWT中的sub字段存储用户名，userId字段存储用户ID（但有时可能存储的是用户名）
-                    userId = jwtUtils.extractUsernameFromToken(resolvedToken);
-                    orgTags = jwtUtils.extractOrgTagsFromToken(resolvedToken);
-                } catch (Exception e) {
-                    LogUtils.logBusiness("DOWNLOAD_FILE_BY_NAME", "anonymous", "Token解析失败: fileName=%s", fileName);
-                }
-            }
-            
+            String userId = authenticatedUsername();
+
             LogUtils.logBusiness("DOWNLOAD_FILE_BY_NAME", userId != null ? userId : "anonymous", "接收到文件下载请求: fileName=%s", fileName);
-            
-            // 如果没有提供token或token无效，只允许下载公开文件
-            if (userId == null) {
+
+            // 如果没有登录态，只允许下载公开文件
+            if (userId == null || !validSession(userId)) {
                 // 查找公开文件
                 Optional<FileUpload> publicFile = fileUploadRepository.findByFileNameAndIsPublicTrue(fileName);
                 if (publicFile.isEmpty()) {
@@ -530,17 +537,17 @@ public class DocumentController {
                     response.put("message", "文件不存在或需要登录访问");
                     return ResponseEntity.status(HttpStatus.NOT_FOUND).body(response);
                 }
-                
+
                 FileUpload file = publicFile.get();
                 String downloadUrl = documentService.generateDownloadUrl(file.getFileMd5());
-                
+
                 if (downloadUrl == null) {
                     Map<String, Object> response = new HashMap<>();
                     response.put("code", HttpStatus.INTERNAL_SERVER_ERROR.value());
                     response.put("message", "无法生成下载链接");
                     return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
                 }
-                
+
                 Map<String, Object> response = new HashMap<>();
                 response.put("code", 200);
                 response.put("message", "文件下载链接生成成功");
@@ -551,15 +558,15 @@ public class DocumentController {
                 ));
                 return ResponseEntity.ok(response);
             }
-            
-            // 有token的情况，查找用户可访问的文件
-            List<FileUpload> accessibleFiles = documentService.getAccessibleFiles(userId, orgTags);
-            
+
+            // 登录态组织可见性由服务端实时计算，不再信任 token 声明。
+            List<FileUpload> accessibleFiles = documentService.getAccessibleFiles(userId, null);
+
             // 根据文件名查找匹配的文件
             Optional<FileUpload> targetFile = accessibleFiles.stream()
                     .filter(file -> file.getFileName().equals(fileName))
                     .findFirst();
-                    
+
             if (targetFile.isEmpty()) {
                 LogUtils.logUserOperation(userId, "DOWNLOAD_FILE_BY_NAME", fileName, "FAILED_NOT_FOUND");
                 monitor.end("下载失败：文件不存在或无权限访问");
@@ -568,12 +575,12 @@ public class DocumentController {
                 response.put("message", "文件不存在或无权限访问");
                 return ResponseEntity.status(HttpStatus.NOT_FOUND).body(response);
             }
-            
+
             FileUpload file = targetFile.get();
-            
+
             // 生成下载链接或返回预签名URL
             String downloadUrl = documentService.generateDownloadUrl(file.getFileMd5());
-            
+
             if (downloadUrl == null) {
                 LogUtils.logUserOperation(userId, "DOWNLOAD_FILE_BY_NAME", fileName, "FAILED_GENERATE_URL");
                 monitor.end("下载失败：无法生成下载链接");
@@ -582,11 +589,11 @@ public class DocumentController {
                 response.put("message", "无法生成下载链接");
                 return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
             }
-            
+
             LogUtils.logFileOperation(userId, "DOWNLOAD", file.getFileName(), file.getFileMd5(), "SUCCESS");
             LogUtils.logUserOperation(userId, "DOWNLOAD_FILE_BY_NAME", fileName, "SUCCESS");
             monitor.end("文件下载链接生成成功");
-            
+
             Map<String, Object> response = new HashMap<>();
             response.put("code", 200);
             response.put("message", "文件下载链接生成成功");
@@ -596,50 +603,29 @@ public class DocumentController {
                 "fileSize", file.getTotalSize()
             ));
             return ResponseEntity.ok(response);
-            
+
         } catch (Exception e) {
-            String userId = "unknown";
-            try {
-                if (token != null && !token.trim().isEmpty()) {
-                    userId = jwtUtils.extractUsernameFromToken(token);
-                }
-            } catch (Exception ignored) {}
-            
-            LogUtils.logBusinessError("DOWNLOAD_FILE_BY_NAME", userId, "文件下载失败: fileName=%s", e, fileName);
+            LogUtils.logBusinessError("DOWNLOAD_FILE_BY_NAME", "unknown", "文件下载失败: fileName=%s", e, fileName);
             monitor.end("下载失败: " + e.getMessage());
             Map<String, Object> response = new HashMap<>();
             response.put("code", HttpStatus.INTERNAL_SERVER_ERROR.value());
-            response.put("message", "文件下载失败: " + e.getMessage()); 
+            response.put("message", "文件下载失败");
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
         }
     }
-    
+
     /**
-     * 在线预览PDF原文件。
-     *
-     * @param fileName 文件名
-     * @param token JWT token
-     * @return PDF文件流或错误响应
+     * 在线预览PDF原文件（仅 Authorization 头，不接受 URL token）。
      */
     @GetMapping("/preview/pdf")
     public ResponseEntity<?> previewPdfByName(
-            @RequestParam String fileName,
-            @RequestParam(required = false) String token,
-            @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization) {
+            @RequestParam String fileName) {
 
         LogUtils.PerformanceMonitor monitor = LogUtils.startPerformanceMonitor("PREVIEW_PDF_BY_NAME");
         try {
-            String userId = null;
-            String orgTags = null;
-            String resolvedToken = resolveToken(token, authorization);
-
-            if (resolvedToken != null) {
-                try {
-                    userId = jwtUtils.extractUsernameFromToken(resolvedToken);
-                    orgTags = jwtUtils.extractOrgTagsFromToken(resolvedToken);
-                } catch (Exception e) {
-                    LogUtils.logBusiness("PREVIEW_PDF_BY_NAME", "anonymous", "Token解析失败: fileName=%s", fileName);
-                }
+            String userId = authenticatedUsername();
+            if (userId != null && !validSession(userId)) {
+                userId = null;
             }
 
             LogUtils.logBusiness("PREVIEW_PDF_BY_NAME", userId != null ? userId : "anonymous", "接收到PDF预览请求: fileName=%s", fileName);
@@ -648,7 +634,7 @@ public class DocumentController {
             if (userId == null) {
                 targetFile = fileUploadRepository.findByFileNameAndIsPublicTrue(fileName);
             } else {
-                List<FileUpload> accessibleFiles = documentService.getAccessibleFiles(userId, orgTags);
+                List<FileUpload> accessibleFiles = documentService.getAccessibleFiles(userId, null);
                 targetFile = accessibleFiles.stream()
                         .filter(file -> file.getFileName().equals(fileName))
                         .findFirst();
@@ -671,7 +657,7 @@ public class DocumentController {
                 return ResponseEntity.badRequest().body(response);
             }
 
-            InputStream inputStream = documentService.openFileStream(file.getFileName());
+            InputStream inputStream = documentService.openFileStream(file.getFileMd5(), file.getFileName());
             String encodedFileName = URLEncoder.encode(file.getFileName(), StandardCharsets.UTF_8).replace("+", "%20");
 
             LogUtils.logFileOperation(userId != null ? userId : "anonymous", "PREVIEW_PDF", file.getFileName(), file.getFileMd5(), "SUCCESS");
@@ -681,18 +667,12 @@ public class DocumentController {
                     .contentType(MediaType.APPLICATION_PDF)
                     .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename*=UTF-8''" + encodedFileName)
                     .header(HttpHeaders.CACHE_CONTROL, "no-store")
+                    .header("X-Content-Type-Options", "nosniff")
+                    .header("Referrer-Policy", "no-referrer")
                     .body(new InputStreamResource(inputStream));
         } catch (Exception e) {
-            String userId = "unknown";
-            try {
-                String resolvedToken = resolveToken(token, authorization);
-                if (resolvedToken != null) {
-                    userId = jwtUtils.extractUsernameFromToken(resolvedToken);
-                }
-            } catch (Exception ignored) {}
-
-            LogUtils.logBusinessError("PREVIEW_PDF_BY_NAME", userId, "PDF预览失败: fileName=%s", e, fileName);
-            monitor.end("PDF预览失败: " + e.getMessage());
+            LogUtils.logBusinessError("PREVIEW_PDF_BY_NAME", "unknown", "PDF预览失败: fileName=%s", e, fileName);
+            monitor.end("PDF预览失败");
             Map<String, Object> response = new HashMap<>();
             response.put("code", HttpStatus.INTERNAL_SERVER_ERROR.value());
             response.put("message", "PDF 预览失败");
@@ -700,66 +680,23 @@ public class DocumentController {
         }
     }
 
-    private String resolveToken(String token, String authorization) {
-        if (token != null && !token.trim().isEmpty()) {
-            return token;
-        }
-
-        if (authorization != null && authorization.startsWith("Bearer ")) {
-            return authorization.substring(7);
-        }
-
-        return null;
-    }
-
     /**
-     * 预览文件内容
-     * 
-     * @param fileName 文件名
-     * @param token JWT token (URL参数，用于向后兼容)
-     * @return 文件预览内容或错误响应
+     * 预览文件内容（仅 Authorization 头，不接受 URL token）。
      */
     @GetMapping("/preview")
     public ResponseEntity<?> previewFileByName(
-            @RequestParam String fileName,
-            @RequestParam(required = false) String token) {
-        
+            @RequestParam String fileName) {
+
         LogUtils.PerformanceMonitor monitor = LogUtils.startPerformanceMonitor("PREVIEW_FILE_BY_NAME");
         try {
-            // 验证token并获取用户信息
-            String userId = null;
-            String orgTags = null;
-            
-            // 优先从Spring Security上下文获取已认证的用户信息
-            try {
-                var authentication = SecurityContextHolder.getContext().getAuthentication();
-                if (authentication != null && authentication.isAuthenticated() 
-                    && authentication.getPrincipal() instanceof UserDetails) {
-                    UserDetails userDetails = (UserDetails) authentication.getPrincipal();
-                    userId = userDetails.getUsername();
-                    // 从userDetails中获取组织标签信息
-                    orgTags = userDetails.getAuthorities().stream()
-                        .map(auth -> auth.getAuthority().replace("ROLE_", ""))
-                        .findFirst()
-                        .orElse(null);
-                }
-            } catch (Exception e) {
-                LogUtils.logBusiness("PREVIEW_FILE_BY_NAME", "anonymous", "Security上下文获取失败: fileName=%s", fileName);
+            String userId = authenticatedUsername();
+            if (userId != null && !validSession(userId)) {
+                userId = null;
             }
-            
-            // 如果Security上下文中没有用户信息，尝试从URL参数token中获取
-            if (userId == null && token != null && !token.trim().isEmpty()) {
-                try {
-                    userId = jwtUtils.extractUsernameFromToken(token);
-                    orgTags = jwtUtils.extractOrgTagsFromToken(token);
-                } catch (Exception e) {
-                    LogUtils.logBusiness("PREVIEW_FILE_BY_NAME", "anonymous", "Token解析失败: fileName=%s", fileName);
-                }
-            }
-            
+
             LogUtils.logBusiness("PREVIEW_FILE_BY_NAME", userId != null ? userId : "anonymous", "接收到文件预览请求: fileName=%s", fileName);
-            
-            // 如果没有提供token或token无效，只允许预览公开文件
+
+            // 未登录只允许预览公开文件
             if (userId == null) {
                 Optional<FileUpload> publicFile = fileUploadRepository.findByFileNameAndIsPublicTrue(fileName);
                 if (publicFile.isEmpty()) {
@@ -768,17 +705,17 @@ public class DocumentController {
                     response.put("message", "文件不存在或需要登录访问");
                     return ResponseEntity.status(HttpStatus.NOT_FOUND).body(response);
                 }
-                
+
                 FileUpload file = publicFile.get();
                 String previewContent = documentService.getFilePreviewContent(file.getFileMd5(), file.getFileName());
-                
+
                 if (previewContent == null) {
                     Map<String, Object> response = new HashMap<>();
                     response.put("code", HttpStatus.INTERNAL_SERVER_ERROR.value());
                     response.put("message", "无法获取文件预览内容");
                     return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
                 }
-                
+
                 Map<String, Object> response = new HashMap<>();
                 response.put("code", 200);
                 response.put("message", "文件预览内容获取成功");
@@ -789,15 +726,15 @@ public class DocumentController {
                 ));
                 return ResponseEntity.ok(response);
             }
-            
-            // 有token的情况，查找用户可访问的文件
-            List<FileUpload> accessibleFiles = documentService.getAccessibleFiles(userId, orgTags);
-            
+
+            // 登录态组织可见性由服务端按用户实时计算。
+            List<FileUpload> accessibleFiles = documentService.getAccessibleFiles(userId, null);
+
             // 根据文件名查找匹配的文件
             Optional<FileUpload> targetFile = accessibleFiles.stream()
                     .filter(file -> file.getFileName().equals(fileName))
                     .findFirst();
-                    
+
             if (targetFile.isEmpty()) {
                 LogUtils.logUserOperation(userId, "PREVIEW_FILE_BY_NAME", fileName, "FAILED_NOT_FOUND");
                 monitor.end("预览失败：文件不存在或无权限访问");
@@ -806,12 +743,12 @@ public class DocumentController {
                 response.put("message", "文件不存在或无权限访问");
                 return ResponseEntity.status(HttpStatus.NOT_FOUND).body(response);
             }
-            
+
             FileUpload file = targetFile.get();
-            
+
             // 获取文件预览内容
             String previewContent = documentService.getFilePreviewContent(file.getFileMd5(), file.getFileName());
-            
+
             if (previewContent == null) {
                 LogUtils.logUserOperation(userId, "PREVIEW_FILE_BY_NAME", fileName, "FAILED_GET_CONTENT");
                 monitor.end("预览失败：无法获取文件内容");
@@ -820,11 +757,11 @@ public class DocumentController {
                 response.put("message", "无法获取文件预览内容");
                 return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
             }
-            
+
             LogUtils.logFileOperation(userId, "PREVIEW", file.getFileName(), file.getFileMd5(), "SUCCESS");
             LogUtils.logUserOperation(userId, "PREVIEW_FILE_BY_NAME", fileName, "SUCCESS");
             monitor.end("文件预览内容获取成功");
-            
+
             Map<String, Object> response = new HashMap<>();
             response.put("code", 200);
             response.put("message", "文件预览内容获取成功");
@@ -834,24 +771,17 @@ public class DocumentController {
                 "fileSize", file.getTotalSize()
             ));
             return ResponseEntity.ok(response);
-            
+
         } catch (Exception e) {
-            String userId = "unknown";
-            try {
-                if (token != null && !token.trim().isEmpty()) {
-                    userId = jwtUtils.extractUsernameFromToken(token);
-                }
-            } catch (Exception ignored) {}
-            
-            LogUtils.logBusinessError("PREVIEW_FILE_BY_NAME", userId, "文件预览失败: fileName=%s", e, fileName);
+            LogUtils.logBusinessError("PREVIEW_FILE_BY_NAME", "unknown", "文件预览失败: fileName=%s", e, fileName);
             monitor.end("预览失败: " + e.getMessage());
             Map<String, Object> response = new HashMap<>();
             response.put("code", HttpStatus.INTERNAL_SERVER_ERROR.value());
-            response.put("message", "文件预览失败: " + e.getMessage()); 
+            response.put("message", "文件预览失败");
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
         }
     }
-    
+
     /**
      * 根据tagId获取tagName
      *

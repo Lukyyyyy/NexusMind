@@ -1,11 +1,14 @@
 <script setup lang="ts">
-import { onActivated, onMounted } from 'vue';
+import { computed, onActivated, onMounted } from 'vue';
+import { getSafeIframeUrl } from './safe-url';
 
 interface Props {
   url: string;
 }
 
-defineProps<Props>();
+const props = defineProps<Props>();
+
+const safeUrl = computed(() => getSafeIframeUrl(props.url));
 
 onMounted(() => {
   console.log('mounted');
@@ -18,7 +21,7 @@ onActivated(() => {
 
 <template>
   <div class="h-full">
-    <iframe id="iframePage" class="size-full" :src="url"></iframe>
+    <iframe v-if="safeUrl" id="iframePage" class="size-full" :src="safeUrl"></iframe>
   </div>
 </template>
 

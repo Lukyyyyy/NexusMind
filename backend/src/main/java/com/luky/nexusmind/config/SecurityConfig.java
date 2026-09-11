@@ -57,13 +57,12 @@ public class SecurityConfig {
                                     "/api/v1/users/login",
                                     "/api/v1/auth/refreshToken"
                             ).permitAll()
-                            // 允许测试接口
-                            .requestMatchers("/api/v1/test/**").permitAll()
-                            // 允许 Actuator 监控端点
-                            .requestMatchers("/actuator/**").permitAll()
+                            // 健康检查供容器探针使用，其余 Actuator 端点一律需要超级管理员。
+                            .requestMatchers("/actuator/health", "/actuator/health/**").permitAll()
+                            .requestMatchers("/actuator/**").hasRole("SUPER_ADMIN")
                             // 短期下载票据在控制器中验证，不使用登录 JWT 作为 URL 参数。
                             .requestMatchers("/api/v1/documents/download/content").permitAll()
-                            // PDF预览接口在控制器内部按token校验文件访问权限，避免嵌入式预览被安全过滤器提前拦截
+                            // PDF预览接口在控制器内部按登录态校验文件访问权限，不接受 URL token。
                             .requestMatchers("/api/v1/documents/preview/pdf").permitAll()
                             // SSE 事件流使用一次性短期票据，避免把登录 JWT 放入 URL。
                             .requestMatchers("/api/v1/upload/status/events").permitAll()
@@ -73,8 +72,6 @@ public class SecurityConfig {
                             .requestMatchers("/api/v1/users/conversation/**").hasAnyRole("USER", "ADMIN", "SUPER_ADMIN")
                             // 搜索接口 - 普通用户和管理员都可访问
                             .requestMatchers("/api/v1/search/**").hasAnyRole("USER", "ADMIN", "SUPER_ADMIN")
-                            // 聊天相关接口 - WebSocket停止Token获取 (允许匿名访问)
-                            .requestMatchers("/api/v1/chat/websocket-token").permitAll()
                             // 额度与计价只能由超级管理员维护；需置于通用 admin 规则之前。
                             .requestMatchers("/api/v1/admin/model-usage/**").hasRole("SUPER_ADMIN")
                             // 管理员专属接口 - 知识库管理、系统状态、用户活动监控
@@ -96,6 +93,15 @@ public class SecurityConfig {
                     // 设置会话创建策略为STATELESS，表示不会创建会话，通常用于无状态的API应用
                     .sessionManagement(session -> session
                             .sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                    .headers(headers -> headers
+                            .contentTypeOptions(contentType -> {})
+                            .frameOptions(frame -> frame.deny())
+                            .referrerPolicy(referrer -> referrer.policy(
+                                    org.springframework.security.web.header.writers.ReferrerPolicyHeaderWriter.ReferrerPolicy.NO_REFERRER))
+                            .contentSecurityPolicy(csp -> csp.policyDirectives(
+                                    "default-src 'self'; img-src 'self' blob: data:; script-src 'self'; "
+                                            + "style-src 'self' 'unsafe-inline'; connect-src 'self' wss:; "
+                                            + "frame-ancestors 'none'; object-src 'none'; base-uri 'self'")))
                     // 添加JWT认证过滤器
                     .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
                     // 添加组织标签授权过滤器

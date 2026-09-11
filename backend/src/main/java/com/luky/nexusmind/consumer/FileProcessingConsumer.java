@@ -128,7 +128,7 @@ public class FileProcessingConsumer {
                         "file.storage.download", task.getUserId(), task.getFileMd5(), task.getFileName())
                         .attribute("storage.path.type", resolvePathType(task.getFilePath()));
                 try {
-                    fileStream = uploadService.openMergedFile(task.getFileName());
+                    fileStream = uploadService.openMergedFile(task.getFileMd5(), task.getFileName());
                 } catch (Exception e) {
                     downloadSpan.error(e);
                     throw e;

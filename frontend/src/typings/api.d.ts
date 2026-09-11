@@ -807,8 +807,8 @@ declare namespace Api {
       showScope?: boolean;
     }
 
-    interface Token {
-      cmdToken: string;
+    interface WsTicket {
+      ticket: string;
     }
   }
 

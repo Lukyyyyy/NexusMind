@@ -9,6 +9,8 @@ onMounted(async () => {
   if (chatStore.activeSessionId) {
     await chatStore.loadMessages(chatStore.activeSessionId);
   }
+  const ticket = await chatStore.ensureWsTicket();
+  if (ticket) chatStore.wsOpen();
 });
 </script>
 

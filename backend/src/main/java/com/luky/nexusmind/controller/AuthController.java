@@ -7,7 +7,10 @@ import com.luky.nexusmind.repository.UserRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
 
 import java.util.Map;
 
@@ -81,14 +84,6 @@ public class AuthController {
             monitor.end("刷新token异常: " + e.getMessage());
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of("code", 500, "message", "服务器内部错误"));
         }
-    }
-
-    /**
-     * 自定义后端错误接口（用于测试）
-     */
-    @GetMapping("/error")
-    public ResponseEntity<?> customBackendError(@RequestParam String code, @RequestParam String msg) {
-        return ResponseEntity.status(Integer.parseInt(code)).body(Map.of("code", Integer.parseInt(code), "message", msg));
     }
 }
 

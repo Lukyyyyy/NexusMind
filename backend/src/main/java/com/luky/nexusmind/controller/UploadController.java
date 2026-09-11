@@ -521,7 +521,7 @@ public class UploadController {
 
             // 合并文件
             LogUtils.logBusiness("MERGE_FILE", userId, "开始合并文件分片: fileMd5=%s, fileName=%s, fileType=%s, 分片数量=%d", request.fileMd5(), request.fileName(), fileType, totalChunks);
-            String objectUrl = uploadService.mergeChunks(request.fileMd5(), request.fileName(), userId);
+            uploadService.mergeChunks(request.fileMd5(), request.fileName(), userId);
             LogUtils.logFileOperation(userId, "MERGE", request.fileName(), request.fileMd5(), "SUCCESS");
 
             // 发送任务到 Kafka，包含完整的权限信息
@@ -559,12 +559,11 @@ public class UploadController {
                 kafkaSpan.close();
             }
             LogUtils.logBusiness("MERGE_FILE", userId, "文件处理任务已发送: fileMd5=%s, fileName=%s, fileType=%s", request.fileMd5(), request.fileName(), fileType);
-            traceSpan.attribute("nexusmind.merge.status", "success")
-                    .attribute("nexusmind.file.object_url.created", true);
+            traceSpan.attribute("nexusmind.merge.status", "success");
 
-            // 构建数据对象
+            // 构建数据对象（不再返回 MinIO 预签名地址）
             Map<String, Object> data = new HashMap<>();
-            data.put("object_url", objectUrl);
+            data.put("fileMd5", request.fileMd5());
             
             // 构建统一响应格式
             Map<String, Object> response = new HashMap<>();

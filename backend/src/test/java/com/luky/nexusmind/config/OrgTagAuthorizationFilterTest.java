@@ -60,7 +60,7 @@ class OrgTagAuthorizationFilterTest {
 
         assertEquals("42", request.getAttribute("userId"));
         assertEquals("ADMIN", request.getAttribute("role"));
-        assertEquals("default", request.getAttribute("orgTags"));
+        assertEquals("", request.getAttribute("orgTags"));
         assertTrue(continued.get());
     }
 
@@ -115,7 +115,7 @@ class OrgTagAuthorizationFilterTest {
 
         assertEquals("42", request.getAttribute("userId"));
         assertEquals("USER", request.getAttribute("role"));
-        assertEquals("研发部", request.getAttribute("orgTags"));
+        assertEquals("", request.getAttribute("orgTags"));
         assertTrue(continued.get());
     }
 

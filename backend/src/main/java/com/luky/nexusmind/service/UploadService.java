@@ -655,7 +655,7 @@ public class UploadService {
             }
             logger.info("分片检查完成，所有分片都存在 => fileMd5: {}, fileName: {}, fileType: {}", fileMd5, fileName, fileType);
             
-            String mergedPath = "merged/" + fileName;
+            String mergedPath = resolveMergedObject(fileMd5, fileName);
             logger.info("开始合并分片 => fileMd5: {}, fileName: {}, fileType: {}, 合并后路径: {}", fileMd5, fileName, fileType, mergedPath);
             
             try {
@@ -762,20 +762,12 @@ public class UploadService {
                 }
                 logger.info("文件状态已更新为已完成 => fileMd5: {}, fileName: {}, fileType: {}", fileMd5, fileName, fileType);
 
-                // 生成预签名 URL（有效期为 1 小时）
-                logger.info("开始生成预签名URL => fileMd5: {}, fileName: {}, path: {}", fileMd5, fileName, mergedPath);
-                String presignedUrl = minioClient.getPresignedObjectUrl(
-                        GetPresignedObjectUrlArgs.builder()
-                                .method(Method.GET)
-                                .bucket(minioBucketName)
-                                .object(mergedPath)
-                                .expiry(1, TimeUnit.HOURS) // 设置有效期为 1 小时
-                                .build()
-                );
-                logger.info("预签名URL已生成 => fileMd5: {}, fileName: {}, fileType: {}, URL: {}", fileMd5, fileName, fileType, presignedUrl);
+                // 合并完成即返回对象键，不再签发可绕过鉴权的 MinIO 预签名 URL。
+                // 后续读取一律走 DocumentService 鉴权 + 后端短期票据。
+                logger.info("分片合并完成 => fileMd5: {}, fileName: {}, path: {}, size: {}", fileMd5, fileName, mergedPath, stat.size());
                 span.attribute("nexusmind.merge.status", "success")
                         .attribute("nexusmind.file.merged_size", stat.size());
-                return presignedUrl;
+                return mergedPath;
             } catch (Exception e) {
                 logger.error("合并文件失败 => fileMd5: {}, fileName: {}, fileType: {}, 错误类型: {}, 错误信息: {}", 
                           fileMd5, fileName, fileType, e.getClass().getName(), e.getMessage(), e);
@@ -807,17 +799,81 @@ public class UploadService {
         deleteFileMark(fileMd5, userId);
     }
 
-    public java.io.InputStream openMergedFile(String fileName) {
+    public java.io.InputStream openMergedFile(String fileMd5, String fileName) {
         try {
-            return minioClient.getObject(GetObjectArgs.builder()
-                    .bucket(minioBucketName).object("merged/" + fileName).build());
-        } catch (Exception e) {
-            throw new IllegalStateException("读取原始文件失败", e);
+            return openMergedFileByObject(resolveMergedObject(fileMd5, fileName));
+        } catch (Exception primary) {
+            if (fileMd5 != null && fileMd5.matches("[a-fA-F0-9]{32}")) {
+                try {
+                    return openMergedFileByObject(resolveMergedObject(null, fileName));
+                } catch (Exception ignored) {
+                    // fall through to primary error
+                }
+            }
+            throw new IllegalStateException("读取原始文件失败", primary);
         }
     }
 
+    public java.io.InputStream openMergedFile(String fileName) {
+        return openMergedFile(null, fileName);
+    }
+
+    private java.io.InputStream openMergedFileByObject(String objectName) throws Exception {
+        return minioClient.getObject(GetObjectArgs.builder()
+                .bucket(minioBucketName).object(objectName).build());
+    }
+
+    /**
+     * 合并对象键与展示文件名分离：按 fileMd5 隔离可以避免同名覆盖；
+     * 历史对象仍按旧 key 读取，保证已上线数据可迁移。
+     */
+    public static String resolveMergedObject(String fileMd5, String fileName) {
+        String safeName = sanitizeFileName(fileName);
+        if (fileMd5 != null && fileMd5.matches("[a-fA-F0-9]{32}")) {
+            return "merged/" + fileMd5.toLowerCase() + "/" + safeName;
+        }
+        return "merged/" + safeName;
+    }
+
+    private String resolveMergedObject(String fileName) {
+        return resolveMergedObject(null, fileName);
+    }
+
+    /** 新 key 优先、旧 key 兜底，保证存量文件可读、删除可清。 */
+    public static java.util.List<String> mergedObjectCandidates(String fileMd5, String fileName) {
+        java.util.List<String> candidates = new java.util.ArrayList<>(2);
+        String safeName = sanitizeFileName(fileName);
+        if (fileMd5 != null && fileMd5.matches("[a-fA-F0-9]{32}")) {
+            candidates.add("merged/" + fileMd5.toLowerCase() + "/" + safeName);
+        }
+        String legacy = "merged/" + safeName;
+        if (!candidates.contains(legacy)) candidates.add(legacy);
+        return candidates;
+    }
+
+    public static String sanitizeFileName(String fileName) {
+        String base = fileName == null || fileName.isBlank() ? "file" : fileName.trim();
+        base = base.substring(Math.max(0, base.lastIndexOf('/') + 1));
+        base = base.substring(Math.max(0, base.lastIndexOf('\\') + 1));
+        base = base.replaceAll("[\\x00-\\x1F\\x7F]", "_");
+        if (base.equals(".") || base.equals("..")) {
+            base = "file";
+        }
+        while (base.startsWith(".")) {
+            base = "file" + base.substring(1);
+        }
+        if (base.isBlank()) {
+            base = "file";
+        }
+        if (base.length() > 120) {
+            base = base.substring(0, 120);
+        }
+        return base;
+    }
+
+    /** 兼容旧调用：仅供内部诊断使用，不再向前端返回该地址。 */
     public String getMergedFileUrl(String fileName) {
-        String mergedPath = "merged/" + fileName;
+        String mergedPath = resolveMergedObject(null, fileName);
         try {
             minioClient.statObject(
                     StatObjectArgs.builder()

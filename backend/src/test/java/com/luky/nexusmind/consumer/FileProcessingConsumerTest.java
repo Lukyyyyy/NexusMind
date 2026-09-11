@@ -86,27 +86,27 @@ class FileProcessingConsumerTest {
         status.setParsedChunkCount(31);
         when(statuses.findByFileMd5AndUserId("md5", "user")).thenReturn(Optional.of(status));
         when(chunks.countDistinctChunksByFileMd5("md5")).thenReturn(5L);
-        when(uploads.openMergedFile("paper.pdf")).thenThrow(new IllegalStateException("storage unavailable"));
+        when(uploads.openMergedFile("md5", "paper.pdf")).thenThrow(new IllegalStateException("storage unavailable"));
         assertThrows(RuntimeException.class, () -> consumer.processTask(task));
-        verify(uploads).openMergedFile("paper.pdf");
+        verify(uploads).openMergedFile("md5", "paper.pdf");
         verify(es, never()).countByFileMd5(any());
         verify(statuses, never()).markCompleted(any(), anyInt(), anyLong());
     }
 
     @Test void expiredLegacyUrlIsNotUsedForDownload() throws Exception {
         when(statuses.findByFileMd5AndUserId("md5", "user")).thenReturn(Optional.empty());
-        when(uploads.openMergedFile("paper.pdf")).thenReturn(new ByteArrayInputStream(new byte[]{1}));
+        when(uploads.openMergedFile("md5", "paper.pdf")).thenReturn(new ByteArrayInputStream(new byte[]{1}));
         when(parse.parseAndSave(eq("md5"), any(), eq("user"), eq("default"), eq(true), any(), eq("paper.pdf"), isNull())).thenReturn(1);
         when(vectors.vectorize("md5", "user", "default", true)).thenReturn(1);
         consumer.processTask(task);
-        verify(uploads).openMergedFile("paper.pdf");
+        verify(uploads).openMergedFile("md5", "paper.pdf");
         verify(statuses).markCompleted(task, 1, 1L);
     }
 
     @Test void downloadFailureRecordsActualStageAndPreservesCause() {
         when(statuses.findByFileMd5AndUserId("md5", "user")).thenReturn(Optional.empty());
         var cause = new IllegalStateException("NoSuchKey");
-        when(uploads.openMergedFile("paper.pdf")).thenThrow(cause);
+        when(uploads.openMergedFile("md5", "paper.pdf")).thenThrow(cause);
         var failure = assertThrows(RuntimeException.class, () -> consumer.processTask(task));
         assertSame(cause, failure.getCause());
         verify(statuses).markRunning(task, ProcessingStage.PARSING, "正在读取原始文件");

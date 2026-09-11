@@ -80,7 +80,7 @@ spring:
       key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
       value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
       properties:
-        spring.json.trusted.packages: "*" # 允许反序列化的包
+        spring.json.trusted.packages: "com.luky.nexusmind.model" # 限制Kafka反序列化白名单，防内网RCE
         client.dns.lookup: use_all_dns_ips
         max.poll.interval.ms: 1800000
         max.poll.records: 1
@@ -117,6 +117,13 @@ admin:
 
 app:
   public-url: ${APP_PUBLIC_URL:http://localhost:9527}
+  test-endpoints-enabled: ${APP_TEST_ENDPOINTS_ENABLED:false}
+
+security:
+  login:
+    max-attempts: ${LOGIN_MAX_ATTEMPTS:5}
+    window-seconds: ${LOGIN_WINDOW_SECONDS:60}
+    lock-seconds: ${LOGIN_LOCK_SECONDS:300}
 
 smtp:
   crypto-secret: ${SMTP_CRYPTO_SECRET:}
@@ -139,7 +146,8 @@ mail:
 
 file:
   download:
-    ticket-ttl: ${FILE_DOWNLOAD_TICKET_TTL:1h}
+    ticket-ttl: ${FILE_DOWNLOAD_TICKET_TTL:5m}
+    ticket-single-use: ${FILE_DOWNLOAD_TICKET_SINGLE_USE:true}
   parsing:
     chunk-size: 512 # 每个文本块的最大字符数
     min-chunk-size: 256 # 用户可配置文本块大小下限
@@ -249,10 +257,10 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info,metrics
+        include: health
   endpoint:
     health:
-      show-details: always
+      show-details: never
   health:
     elasticsearch:
       enabled: false

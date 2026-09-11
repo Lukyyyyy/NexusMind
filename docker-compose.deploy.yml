@@ -160,7 +160,7 @@ services:
     env_file:
       - .env.deploy.local
     environment:
-      SPRING_PROFILES_ACTIVE: docker
+      SPRING_PROFILES_ACTIVE: prod,docker
       SPRING_FLYWAY_ENABLED: "true"
       SPRING_FLYWAY_BASELINE_VERSION: "7"
       JAVA_TOOL_OPTIONS: -Xms128m -Xmx384m -XX:+UseSerialGC -XX:MaxMetaspaceSize=256m -XX:+ExitOnOutOfMemoryError -Dfile.encoding=UTF-8 -Duser.timezone=Asia/Shanghai

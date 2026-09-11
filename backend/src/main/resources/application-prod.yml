@@ -1,0 +1,2 @@
+app:
+  websocket-allowed-origins: ${APP_WEBSOCKET_ALLOWED_ORIGINS}

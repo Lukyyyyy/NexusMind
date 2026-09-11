@@ -43,6 +43,7 @@ spring:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:kafka:9092}
     consumer:
       properties:
+        spring.json.trusted.packages: "com.luky.nexusmind.model"
         max.poll.records: 1
   servlet:
     multipart:
@@ -69,10 +70,19 @@ admin:
 
 app:
   public-url: ${APP_PUBLIC_URL:http://127.0.0.1:9527}
+  test-endpoints-enabled: ${APP_TEST_ENDPOINTS_ENABLED:false}
+
+security:
+  login:
+    max-attempts: ${LOGIN_MAX_ATTEMPTS:5}
+    window-seconds: ${LOGIN_WINDOW_SECONDS:60}
+    lock-seconds: ${LOGIN_LOCK_SECONDS:300}
 
 file:
   download:
     public-url: ${APP_PUBLIC_URL:http://127.0.0.1:9527}
+    ticket-ttl: ${FILE_DOWNLOAD_TICKET_TTL:5m}
+    ticket-single-use: ${FILE_DOWNLOAD_TICKET_SINGLE_USE:true}
   parsing:
     chunk-size: 512
     min-chunk-size: 256

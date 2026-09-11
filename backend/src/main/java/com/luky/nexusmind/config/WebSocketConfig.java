@@ -8,6 +8,7 @@ import org.springframework.web.socket.config.annotation.EnableWebSocket;
 import org.springframework.web.socket.config.annotation.WebSocketConfigurer;
 import org.springframework.web.socket.config.annotation.WebSocketHandlerRegistry;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
 import org.springframework.data.redis.listener.ChannelTopic;
@@ -24,12 +25,15 @@ public class WebSocketConfig implements WebSocketConfigurer {
     @Autowired
     private NotificationWebSocketHandler notificationWebSocketHandler;
 
+    @Value("${app.websocket-allowed-origins:}")
+    private String websocketAllowedOrigins;
+
     @Override
     public void registerWebSocketHandlers(WebSocketHandlerRegistry registry) {
-        registry.addHandler(chatWebSocketHandler, "/chat/{token}")
-                .setAllowedOrigins("*"); // 允许所有来源访问，生产环境应该限制
+        registry.addHandler(chatWebSocketHandler, "/chat/{ticket}")
+                .setAllowedOriginPatterns(websocketAllowedOrigins.split(","));
         registry.addHandler(notificationWebSocketHandler, "/notifications/{ticket}")
-                .setAllowedOriginPatterns("*");
+                .setAllowedOriginPatterns(websocketAllowedOrigins.split(","));
     }
 
     @Bean

@@ -216,21 +216,27 @@ const handleSend = async () => {
     }
     generatingSessionId.value = null;
 
-    const { error, data } = await request<Api.Chat.Token>({ url: 'chat/websocket-token' });
-    if (error) {
-      if (assistant?.status === 'cancelled') assistant.status = previousStatus;
-      if (sessionId != null) chatStore.startGeneration(sessionId);
-      stopping.value = false;
-      return;
+    // 停止指令沿已认证的 WebSocket 会话发送，不再请求全局令牌。
+    if (wsStatus.value !== 'OPEN') {
+      const ticket = await chatStore.ensureWsTicket();
+      if (ticket) chatStore.wsOpen();
     }
-
-    chatStore.wsSend(JSON.stringify({ type: 'stop', _internal_cmd_token: data.cmdToken }));
+    chatStore.wsSend(JSON.stringify({ type: 'stop' }));
     stopping.value = false;
     return;
   }
 
   const sessionId = await chatStore.ensureActiveSession();
   if (!sessionId) return;
+
+  const ticket = await chatStore.ensureWsTicket();
+  if (!ticket) {
+    window.$message?.error('聊天连接获取失败，请重新登录');
+    return;
+  }
+  if (wsStatus.value !== 'OPEN') {
+    chatStore.wsOpen();
+  }
 
   const content = input.value.message.trim();
   if (!content) return;

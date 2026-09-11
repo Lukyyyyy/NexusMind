@@ -11,7 +11,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.luky.nexusmind.repository.UserRepository;
 import com.luky.nexusmind.model.User;
 import com.luky.nexusmind.service.ChatHandler;
-import com.luky.nexusmind.utils.JwtUtils;
+import com.luky.nexusmind.service.ChatWebSocketTicketService;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.Map;
 import java.util.Set;
@@ -23,37 +23,34 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
     private final ChatHandler chatHandler;
     private final ConcurrentHashMap<String, Set<WebSocketSession>> sessions = new ConcurrentHashMap<>();
     private final ObjectMapper objectMapper = new ObjectMapper();
-    private final JwtUtils jwtUtils;
+    private final ChatWebSocketTicketService chatTickets;
     private final UserRepository userRepository;
-    
-    // 内部指令令牌 - 可以从配置文件读取
-    private static final String INTERNAL_CMD_TOKEN = "WSS_STOP_CMD_" + System.currentTimeMillis() % 1000000;
 
-    public ChatWebSocketHandler(ChatHandler chatHandler, JwtUtils jwtUtils, UserRepository userRepository) {
+    public ChatWebSocketHandler(ChatHandler chatHandler, ChatWebSocketTicketService chatTickets, UserRepository userRepository) {
         this.chatHandler = chatHandler;
-        this.jwtUtils = jwtUtils;
+        this.chatTickets = chatTickets;
         this.userRepository = userRepository;
     }
 
     @Override
     public void afterConnectionEstablished(WebSocketSession session) throws Exception {
-        String token = lastPathSegment(session);
-        String username = jwtUtils.extractUsernameFromToken(token);
+        String ticket = lastPathSegment(session);
+        String username = chatTickets.consume(ticket);
         User user = username == null ? null : userRepository.findByUsername(username).orElse(null);
-        if (!jwtUtils.validateToken(token) || user == null || !user.isEnabled()) {
+        if (username == null || user == null || !user.isEnabled()) {
             session.close(CloseStatus.POLICY_VIOLATION);
             return;
         }
-        UserIdentity identity = extractUserIdentity(session);
-        sessions.computeIfAbsent(identity.chatUserId(), ignored -> ConcurrentHashMap.newKeySet()).add(session);
-        logger.info("WebSocket连接已建立，用户ID: {}，会话ID: {}",
-                    identity.chatUserId(), session.getId());
+        session.getAttributes().put("chatUsername", username);
+        session.getAttributes().put("chatUserId", String.valueOf(user.getId()));
+        sessions.computeIfAbsent(username, ignored -> ConcurrentHashMap.newKeySet()).add(session);
+        logger.info("WebSocket连接已建立，用户ID: {}，会话ID: {}", username, session.getId());
     }
 
     @Override
     protected void handleTextMessage(WebSocketSession session, TextMessage message) {
-        UserIdentity identity = extractUserIdentity(session);
         try {
+            UserIdentity identity = extractUserIdentity(session);
             if (userRepository.findByUsername(identity.chatUserId()).filter(User::isEnabled).isEmpty()) {
                 disconnectUser(identity.chatUserId());
                 return;
@@ -69,8 +66,8 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
                     String messageType = (String) jsonMessage.get("type");
                     String internalToken = (String) jsonMessage.get("_internal_cmd_token");
                     
-                    // 只有包含正确内部令牌的停止指令才处理
-                    if ("stop".equals(messageType) && INTERNAL_CMD_TOKEN.equals(internalToken)) {
+                    // 停止指令绑定已认证会话，不再依赖全局内部令牌。
+                    if ("stop".equals(messageType) && (internalToken == null || internalToken.isBlank())) {
                         // 处理停止指令
                         logger.info("收到有效的停止按钮指令，用户ID: {}，会话ID: {}", identity.chatUserId(), session.getId());
                         chatHandler.stopResponse(identity.chatUserId(), session);
@@ -100,61 +97,35 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
             chatHandler.processMessage(identity.chatUserId(), payload, session, identity.traceUserId());
             
         } catch (Exception e) {
-            logger.error("处理消息出错，用户ID: {}，会话ID: {}，错误: {}", 
-                        identity.chatUserId(), session.getId(), e.getMessage(), e);
-            sendErrorMessage(session, "消息处理失败：" + e.getMessage());
+            logger.error("处理消息出错，会话ID: {}，错误: {}", session.getId(), e.getMessage(), e);
+            sendErrorMessage(session, "消息处理失败");
         }
     }
 
     @Override
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
-        UserIdentity identity = extractUserIdentity(session);
-        Set<WebSocketSession> values = sessions.get(identity.chatUserId());
-        if (values != null) {
-            values.remove(session);
-            if (values.isEmpty()) sessions.remove(identity.chatUserId());
-        }
-        logger.info("WebSocket连接已关闭，用户ID: {}，会话ID: {}，状态: {}", 
+        try {
+            UserIdentity identity = extractUserIdentity(session);
+            Set<WebSocketSession> values = sessions.get(identity.chatUserId());
+            if (values != null) {
+                values.remove(session);
+                if (values.isEmpty()) sessions.remove(identity.chatUserId());
+            }
+            logger.info("WebSocket连接已关闭，用户ID: {}，会话ID: {}，状态: {}",
                     identity.chatUserId(), session.getId(), status);
+        } catch (IllegalStateException e) {
+            logger.debug("未认证会话关闭: {}", session.getId());
+        }
     }
 
     private UserIdentity extractUserIdentity(WebSocketSession session) {
-        String path = session.getUri().getPath();
-        String[] segments = path.split("/");
-        String jwtToken = segments[segments.length - 1];
-
-        String username = jwtUtils.extractUsernameFromToken(jwtToken);
-        String userId = jwtUtils.extractUserIdFromToken(jwtToken);
-        String chatUserId = hasText(username) ? username : userId;
-        if (!hasText(chatUserId)) {
-            logger.warn("无法从JWT令牌中提取用户信息，使用令牌作为用户ID: {}", jwtToken);
-            chatUserId = jwtToken;
+        Object storedUsername = session.getAttributes().get("chatUsername");
+        Object storedUserId = session.getAttributes().get("chatUserId");
+        if (storedUsername instanceof String username && !username.isBlank()) {
+            String userId = storedUserId instanceof String id && !id.isBlank() ? id : username;
+            return new UserIdentity(username, userId);
         }
-
-        if (userId != null && !userId.isBlank()) {
-            logger.debug("从JWT令牌中提取的用户ID: {}", userId);
-            return new UserIdentity(chatUserId, userId);
-        }
-
-        if (!hasText(username)) {
-            return new UserIdentity(chatUserId, chatUserId);
-        }
-
-        String traceUserId = userRepository.findByUsername(username)
-                .map(user -> {
-                    String numericUserId = String.valueOf(user.getId());
-                    logger.debug("JWT令牌缺少用户ID，已通过用户名解析数字用户ID: username={}, userId={}", username, numericUserId);
-                    return numericUserId;
-                })
-                .orElseGet(() -> {
-                    logger.warn("JWT令牌缺少用户ID，且无法通过用户名解析数字用户ID: {}", username);
-                    return username;
-                });
-        return new UserIdentity(username, traceUserId);
-    }
-
-    private static boolean hasText(String value) {
-        return value != null && !value.trim().isEmpty();
+        throw new IllegalStateException("会话缺少已认证身份");
     }
 
     public void disconnectUser(String username) {
@@ -188,10 +159,4 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
         }
     }
     
-    /**
-     * 获取内部指令令牌 - 供前端调用
-     */
-    public static String getInternalCmdToken() {
-        return INTERNAL_CMD_TOKEN;
-    }
-} 
+}

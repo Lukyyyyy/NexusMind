@@ -124,10 +124,17 @@ public class DocumentService {
             parsedAssetService.delete(fileMd5);
             knowledgeGraphService.removeDocument(fileUpload);
             elasticsearchService.deleteByFileMd5(fileMd5);
-            minioClient.removeObject(RemoveObjectArgs.builder()
-                    .bucket(minioBucketName)
-                    .object("merged/" + fileUpload.getFileName())
-                    .build());
+            for (String objectName : com.luky.nexusmind.service.UploadService.mergedObjectCandidates(
+                    fileMd5, fileUpload.getFileName())) {
+                try {
+                    minioClient.removeObject(RemoveObjectArgs.builder()
+                            .bucket(minioBucketName)
+                            .object(objectName)
+                            .build());
+                } catch (Exception ignored) {
+                    // 旧 key 不存在时继续清理下一个候选 key
+                }
+            }
 
             if (uploadService != null) uploadService.deleteUploadChunks(fileMd5, userId);
             documentVectorRepository.deleteByFileMd5(fileMd5);
@@ -151,7 +158,10 @@ public class DocumentService {
      * @param orgTags 用户所属的组织标签（逗号分隔的字符串，仅供兼容性使用）
      * @return 用户可访问的文件列表
      */
-    public List<FileUpload> getAccessibleFiles(String userId, String orgTags) {
+    /**
+     * @param orgTags 仅保留兼容调用方；实际可见性始终按服务端实时成员关系计算，不信任 JWT 声明。
+     */
+    public List<FileUpload> getAccessibleFiles(String userId, @Deprecated String orgTags) {
         String role = findUserByIdentifier(userId)
                 .map(User::getRole)
                 .map(Enum::name)
@@ -417,20 +427,35 @@ public class DocumentService {
      * @param fileName 文件名
      * @return MinIO对象流
      */
-    public InputStream openFileStream(String fileName) {
-        logger.info("打开文件流: fileName={}", fileName);
+    public InputStream openFileStream(String fileMd5, String fileName) {
+        logger.info("打开文件流: fileMd5={}", fileMd5);
 
         try {
-            String objectName = "merged/" + fileName;
-            return minioClient.getObject(
-                    GetObjectArgs.builder()
-                            .bucket(minioBucketName)
-                            .object(objectName)
-                            .build());
+            return openMergedByMd5(fileMd5, fileName);
         } catch (Exception e) {
-            logger.error("打开文件流失败: fileName={}", fileName, e);
+            logger.error("打开文件流失败: fileMd5={}", fileMd5, e);
             throw new RuntimeException("打开文件流失败: " + e.getMessage(), e);
         }
+    }
+
+    public InputStream openFileStream(String fileName) {
+        return openFileStream(null, fileName);
+    }
+
+    private InputStream openMergedByMd5(String fileMd5, String fileName) throws Exception {
+        Exception primary = null;
+        for (String objectName : com.luky.nexusmind.service.UploadService.mergedObjectCandidates(fileMd5, fileName)) {
+            try {
+                return minioClient.getObject(
+                        GetObjectArgs.builder()
+                                .bucket(minioBucketName)
+                                .object(objectName)
+                                .build());
+            } catch (Exception e) {
+                if (primary == null) primary = e;
+            }
+        }
+        throw primary != null ? primary : new IllegalStateException("合并文件不存在");
     }
     
     /**
@@ -444,19 +469,12 @@ public class DocumentService {
         logger.info("获取文件预览内容: fileMd5={}, fileName={}", fileMd5, fileName);
         
         try {
-            // MinIO中的对象路径格式: merged/文件名
-            String objectName = "merged/" + fileName;
-            
             // 判断文件类型
             String fileExtension = getFileExtension(fileName).toLowerCase();
             boolean isPreviewableFile = isPreviewableFile(fileExtension);
             
             if (isPreviewableFile) {
-                try (InputStream inputStream = minioClient.getObject(
-                        GetObjectArgs.builder()
-                                .bucket(minioBucketName)
-                                .object(objectName)
-                                .build())) {
+                try (InputStream inputStream = openMergedByMd5(fileMd5, fileName)) {
 
                     String result = extractPreviewText(inputStream);
                     if (result.isBlank()) {

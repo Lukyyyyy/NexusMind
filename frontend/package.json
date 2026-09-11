@@ -30,6 +30,7 @@
   "scripts": {
     "build": "vite build --mode prod",
     "build:test": "vite build --mode test",
+    "check:iframe-url": "tsx scripts/check-iframe-url.ts",
     "check:observability-layout": "node scripts/check-observability-layout.mjs",
     "cleanup": "sa cleanup",
     "commit": "sa git-commit -l=zh-cn",

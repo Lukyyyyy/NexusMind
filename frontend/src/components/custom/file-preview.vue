@@ -31,7 +31,6 @@ import { request } from '@/service/request';
 import { getAuthorization } from '@/service/request/shared';
 import { getFileExt } from '@/utils/common';
 import { getServiceBaseURL } from '@/utils/service';
-import { localStg } from '@/utils/storage';
 
 interface Props {
   fileName: string;
@@ -83,12 +82,7 @@ function revokePreviewUrl() {
 
 async function loadPdfPreviewUrl() {
   const query = new URLSearchParams({ fileName: props.fileName });
-  const token = localStg.get('token');
   const Authorization = getAuthorization();
-
-  if (token) {
-    query.set('token', token);
-  }
 
   const response = await fetch(`${baseURL}/documents/preview/pdf?${query.toString()}`, {
     headers: Authorization ? { Authorization } : undefined
@@ -128,7 +122,6 @@ async function loadPreviewContent() {
       return;
     }
 
-    const token = localStg.get('token');
     const { error: requestError, data } = await request<{
       fileName: string;
       content: string;
@@ -136,8 +129,7 @@ async function loadPreviewContent() {
     }>({
       url: '/documents/preview',
       params: {
-        fileName: props.fileName,
-        token: token || undefined
+        fileName: props.fileName
       }
     });
     

@@ -12,8 +12,8 @@ import static org.mockito.Mockito.*;
 
 class DocumentDownloadTicketServiceTest {
     @Test
-    void defaultsToOneHourWithoutConfiguration() {
-        verifyConfiguredTtl(null, Duration.ofHours(1));
+    void defaultsToFiveMinutesWithoutConfiguration() {
+        verifyConfiguredTtl(null, Duration.ofMinutes(5));
     }
 
     @Test
@@ -26,7 +26,7 @@ class DocumentDownloadTicketServiceTest {
         StringRedisTemplate redis = mock(StringRedisTemplate.class);
         for (String value : new String[] {"0s", "-1m", "invalid"}) {
             assertThrows(IllegalArgumentException.class, () ->
-                    new DocumentDownloadTicketService(redis, "http://localhost:18081", value));
+                    new DocumentDownloadTicketService(redis, "http://localhost:18081", value, true));
         }
         verifyNoInteractions(redis);
     }
@@ -56,22 +56,22 @@ class DocumentDownloadTicketServiceTest {
         ValueOperations<String, String> values = mock(ValueOperations.class);
         when(redis.opsForValue()).thenReturn(values);
         DocumentDownloadTicketService service = new DocumentDownloadTicketService(redis,
-                "https://nexusmind.lukybetter.com/", "1h");
+                "https://nexusmind.lukybetter.com/", "5m", true);
         String url = service.createUrl("file-md5");
         assertTrue(url.startsWith("https://nexusmind.lukybetter.com/api/v1/documents/download/content?ticket="));
         String ticket = url.substring(url.indexOf("?ticket=") + 8);
         assertTrue(ticket.matches("[A-Za-z0-9_-]{43}"));
-        verify(values).set("nexusmind:download:" + ticket, "file-md5", Duration.ofHours(1));
-        when(values.get("nexusmind:download:" + ticket)).thenReturn("file-md5");
+        verify(values).set("nexusmind:download:" + ticket, "file-md5", Duration.ofMinutes(5));
+        when(values.getAndDelete("nexusmind:download:" + ticket)).thenReturn("file-md5");
         assertEquals("file-md5", service.resolve(ticket).orElseThrow());
-        when(values.get("nexusmind:download:" + ticket)).thenReturn(null);
+        when(values.getAndDelete("nexusmind:download:" + ticket)).thenReturn(null);
         assertTrue(service.resolve(ticket).isEmpty());
     }
 
     @Test
     void rejectsMalformedTicketWithoutReadingRedis() {
         StringRedisTemplate redis = mock(StringRedisTemplate.class);
-        DocumentDownloadTicketService service = new DocumentDownloadTicketService(redis, "http://localhost:18081", "1h");
+        DocumentDownloadTicketService service = new DocumentDownloadTicketService(redis, "http://localhost:18081", "5m", true);
         assertTrue(service.resolve(null).isEmpty());
         assertTrue(service.resolve("../secret").isEmpty());
         assertTrue(service.resolve("").isEmpty());

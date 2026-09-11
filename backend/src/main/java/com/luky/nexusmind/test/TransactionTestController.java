@@ -1,12 +1,14 @@
 package com.luky.nexusmind.test;
 
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.luky.nexusmind.test.dto.TestResponse;
 
+@ConditionalOnProperty(name = "app.test-endpoints-enabled", havingValue = "true", matchIfMissing = false)
 @RestController
 @RequestMapping("/api/v1/test")
 public class TransactionTestController {

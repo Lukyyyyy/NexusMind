@@ -1,7 +1,7 @@
 package com.luky.nexusmind.handler;
 
 import com.luky.nexusmind.service.ChatHandler;
-import com.luky.nexusmind.utils.JwtUtils;
+import com.luky.nexusmind.service.ChatWebSocketTicketService;
 import com.luky.nexusmind.model.User;
 import com.luky.nexusmind.repository.UserRepository;
 import org.junit.jupiter.api.Test;
@@ -20,11 +20,10 @@ class ChatWebSocketHandlerTest {
     @Test
     void chatMessagesUseUsernameForSessionStateAndNumericUserIdForTracing() throws Exception {
         CapturingChatHandler chatHandler = new CapturingChatHandler();
-        JwtUtils jwtUtils = new FixedJwtUtils("42", "admin");
         User admin = new User();
         admin.setUsername("admin");
-        ChatWebSocketHandler handler = new ChatWebSocketHandler(chatHandler, jwtUtils, fixedUserRepository(admin));
-        WebSocketSession session = fixedSession();
+        ChatWebSocketHandler handler = new ChatWebSocketHandler(chatHandler, fixedTicketService(), fixedUserRepository(admin));
+        WebSocketSession session = fixedSession("admin", "42");
 
         handler.handleTextMessage(session, new TextMessage("hello"));
 
@@ -37,12 +36,11 @@ class ChatWebSocketHandlerTest {
     @Test
     void chatMessagesResolveUsernameFallbackOnlyForTracingUserId() throws Exception {
         CapturingChatHandler chatHandler = new CapturingChatHandler();
-        JwtUtils jwtUtils = new FixedJwtUtils(null, "admin");
         User admin = new User();
         admin.setId(1L);
         admin.setUsername("admin");
-        ChatWebSocketHandler handler = new ChatWebSocketHandler(chatHandler, jwtUtils, fixedUserRepository(admin));
-        WebSocketSession session = fixedSession();
+        ChatWebSocketHandler handler = new ChatWebSocketHandler(chatHandler, fixedTicketService(), fixedUserRepository(admin));
+        WebSocketSession session = fixedSession("admin", "1");
 
         handler.handleTextMessage(session, new TextMessage("hello"));
 
@@ -50,12 +48,23 @@ class ChatWebSocketHandlerTest {
         assertEquals("1", chatHandler.lastTraceUserId);
     }
 
-    private static WebSocketSession fixedSession() {
+    private static ChatWebSocketTicketService fixedTicketService() {
+        return new ChatWebSocketTicketService(null) {
+            @Override public String issue(String username) { return "ticket"; }
+            @Override public String consume(String ticket) { return null; }
+        };
+    }
+
+    private static WebSocketSession fixedSession(String username, String userId) {
+        java.util.Map<String, Object> attributes = new java.util.HashMap<>();
+        attributes.put("chatUsername", username);
+        attributes.put("chatUserId", userId);
         return (WebSocketSession) Proxy.newProxyInstance(
                 WebSocketSession.class.getClassLoader(),
                 new Class<?>[]{WebSocketSession.class},
                 (proxy, method, args) -> switch (method.getName()) {
-                    case "getUri" -> URI.create("ws://localhost/chat/jwt-token");
+                    case "getUri" -> URI.create("ws://localhost/chat/ticket");
+                    case "getAttributes" -> attributes;
                     case "getId" -> "session-1";
                     case "isOpen" -> true;
                     default -> null;
@@ -110,30 +119,6 @@ class ChatWebSocketHandlerTest {
             this.lastTraceUserId = traceUserId;
             this.lastMessage = userMessage;
             this.lastSession = session;
-        }
-    }
-
-    private static class FixedJwtUtils extends JwtUtils {
-        private final String userId;
-        private final String username;
-
-        private FixedJwtUtils(String userId) {
-            this(userId, null);
-        }
-
-        private FixedJwtUtils(String userId, String username) {
-            this.userId = userId;
-            this.username = username;
-        }
-
-        @Override
-        public String extractUserIdFromToken(String token) {
-            return userId;
-        }
-
-        @Override
-        public String extractUsernameFromToken(String token) {
-            return username;
         }
     }
 }

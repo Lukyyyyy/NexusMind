@@ -30,7 +30,7 @@ public class AdminUserInitializer implements CommandLineRunner {
     @Value("${admin.username:admin}")
     private String adminUsername;
 
-    @Value("${admin.password:admin123}")
+    @Value("${admin.password:}")
     private String adminPassword;
 
     @Value("${admin.email:}")
@@ -44,27 +44,12 @@ public class AdminUserInitializer implements CommandLineRunner {
 
     @Override
     public void run(String... args) throws Exception {
+        requireStrongAdminPassword();
         logger.info("检查管理员账号是否存在: {}", adminUsername);
         Optional<User> existingAdmin = userRepository.findByUsername(adminUsername);
 
         if (existingAdmin.isPresent()) {
-            User user = existingAdmin.get();
-            boolean changed = false;
-            if (user.getRole() != User.Role.SUPER_ADMIN) {
-                user.setRole(User.Role.SUPER_ADMIN);
-                changed = true;
-                logger.info("已将引导管理员账号 '{}' 升级为超级管理员", adminUsername);
-            }
-            if (user.getDisplayName() == null || user.getDisplayName().isBlank()) {
-                user.setDisplayName(adminUsername);
-                changed = true;
-            }
-            if (user.getEmail() == null && !adminEmail.isBlank()) {
-                user.setEmail(adminEmail.trim().toLowerCase(Locale.ROOT));
-                user.setEmailVerifiedAt(LocalDateTime.now());
-                changed = true;
-            }
-            if (changed) userRepository.save(user);
+            // 已有账号不再自动提权或改资料，避免重启覆盖人工降权。
             return;
         }
 
@@ -87,6 +72,13 @@ public class AdminUserInitializer implements CommandLineRunner {
         } catch (Exception e) {
             logger.error("创建管理员账号失败: {}", e.getMessage(), e);
             throw new RuntimeException("无法创建管理员账号", e);
+        }
+    }
+
+    private void requireStrongAdminPassword() {
+        if (adminPassword == null || adminPassword.length() < 12
+                || "admin123".equals(adminPassword) || "change-me".equals(adminPassword)) {
+            throw new IllegalStateException("ADMIN_PASSWORD 未设置或过弱，拒绝启动");
         }
     }
 }

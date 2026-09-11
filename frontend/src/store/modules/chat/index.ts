@@ -11,7 +11,7 @@ export const useChatStore = defineStore(SetupStoreId.Chat, () => {
   const generatingSessionId = ref<number | null>(null);
   let sessionsRequestId = 0;
 
-  const store = useAuthStore();
+  const wsTicket = ref('');
 
   const {
     status: wsStatus,
@@ -19,9 +19,24 @@ export const useChatStore = defineStore(SetupStoreId.Chat, () => {
     send: wsSend,
     open: wsOpen,
     close: wsClose
-  } = useWebSocket(computed(() => store.token ? `/proxy-ws/chat/${store.token}` : undefined), {
-    autoReconnect: true
+  } = useWebSocket(computed(() => (wsTicket.value ? `/proxy-ws/chat/${wsTicket.value}` : undefined)), {
+    // 票据一次性消费，禁止用同一票据自动重连；重连前必须换发新票据。
+    autoConnect: false,
+    autoReconnect: false
   });
+
+  watch(wsStatus, status => {
+    // 连接关闭后票据即失效，下次发送前重新换发。
+    if (status === 'CLOSED') wsTicket.value = '';
+  });
+
+  async function ensureWsTicket() {
+    if (wsTicket.value) return wsTicket.value;
+    const { error, data } = await request<Api.Chat.WsTicket>({ url: 'chat/ws-ticket' });
+    if (error || !data?.ticket) return '';
+    wsTicket.value = data.ticket;
+    return wsTicket.value;
+  }
 
   const scrollToBottom = ref<null | (() => void)>(null);
 
@@ -240,6 +255,7 @@ export const useChatStore = defineStore(SetupStoreId.Chat, () => {
     applySessionTitle,
     deleteSession,
     ensureActiveSession,
+    ensureWsTicket,
     refreshActiveSessionMessages
   };
 });

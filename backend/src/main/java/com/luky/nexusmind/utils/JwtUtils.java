@@ -14,8 +14,6 @@ import com.luky.nexusmind.service.TokenCacheService;
 
 import javax.crypto.SecretKey;
 import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.util.Base64;
 import java.util.Date;
 import java.util.HashMap;
@@ -44,6 +42,7 @@ public class JwtUtils {
 
     /**
      * Resolve JWT signing key from either Base64 or plain UTF-8 secret text.
+     * 生产环境拒绝弱密钥启动，避免默认密钥被全网复现伪造。
      */
     private SecretKey getSigningKey() {
         byte[] keyBytes = resolveSecretKeyBytes();
@@ -51,22 +50,25 @@ public class JwtUtils {
     }
 
     private byte[] resolveSecretKeyBytes() {
+        if (secretKey == null || secretKey.isBlank()) {
+            throw new IllegalStateException("JWT_SECRET_KEY 未配置，拒绝启动");
+        }
+        String candidate = secretKey.trim();
+        if ("change-me-in-local-dev-only".equals(candidate)) {
+            throw new IllegalStateException("JWT_SECRET_KEY 仍为默认值，拒绝启动");
+        }
         byte[] keyBytes;
         try {
-            keyBytes = Base64.getDecoder().decode(secretKey);
+            keyBytes = Base64.getDecoder().decode(candidate);
         } catch (IllegalArgumentException e) {
-            keyBytes = secretKey.getBytes(StandardCharsets.UTF_8);
+            keyBytes = candidate.getBytes(StandardCharsets.UTF_8);
         }
 
         if (keyBytes.length >= 32) {
             return keyBytes;
         }
 
-        try {
-            return MessageDigest.getInstance("SHA-256").digest(keyBytes);
-        } catch (NoSuchAlgorithmException e) {
-            throw new IllegalStateException("SHA-256 algorithm is not available", e);
-        }
+        throw new IllegalStateException("JWT_SECRET_KEY 长度不足32字节，拒绝启动");
     }
 
     /**
@@ -163,7 +165,7 @@ public class JwtUtils {
             Claims claims = extractClaimsIgnoreExpiration(token);
             return claims != null ? claims.getSubject() : null;
         } catch (Exception e) {
-            logger.error("Error extracting username from token: {}", token, e);
+            logger.debug("Cannot extract username from token", e);
             return null;
         }
     }
@@ -176,7 +178,7 @@ public class JwtUtils {
             Claims claims = extractClaimsIgnoreExpiration(token);
             return claims != null ? claims.get("userId", String.class) : null;
         } catch (Exception e) {
-            logger.error("Error extracting userId from token: {}", token, e);
+            logger.debug("Cannot extract userId from token", e);
             return null;
         }
     }
@@ -189,7 +191,7 @@ public class JwtUtils {
             Claims claims = extractClaimsIgnoreExpiration(token);
             return claims != null ? claims.get("role", String.class) : null;
         } catch (Exception e) {
-            logger.error("Error extracting role from token: {}", token, e);
+            logger.debug("Cannot extract role from token", e);
             return null;
         }
     }
@@ -202,7 +204,7 @@ public class JwtUtils {
             Claims claims = extractClaimsIgnoreExpiration(token);
             return claims != null ? claims.get("orgTags", String.class) : null;
         } catch (Exception e) {
-            logger.error("Error extracting organization tags from token: {}", token, e);
+            logger.debug("Cannot extract organization tags from token", e);
             return null;
         }
     }
@@ -215,7 +217,7 @@ public class JwtUtils {
             Claims claims = extractClaimsIgnoreExpiration(token);
             return claims != null ? claims.get("primaryOrg", String.class) : null;
         } catch (Exception e) {
-            logger.error("Error extracting primary organization from token: {}", token, e);
+            logger.debug("Cannot extract primary organization from token", e);
             return null;
         }
     }

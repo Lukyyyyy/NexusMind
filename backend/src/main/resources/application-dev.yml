@@ -1,133 +1,54 @@
 server:
-  port: 18081 # 指定端口号
+  port: ${BACKEND_PORT:18081}
+
+app:
+  websocket-allowed-origins: http://localhost:9527,http://127.0.0.1:9527
+
 spring:
   devtools:
     restart:
-      enabled: false
+      enabled: true
     livereload:
-      enabled: false
+      enabled: true
   datasource:
-    url: jdbc:mysql://localhost:3306/nexusmind?useSSL=false&serverTimezone=UTC
-    username: root
+    url: jdbc:mysql://localhost:${MYSQL_PORT:3306}/nexusmind?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true
+    username: ${MYSQL_USERNAME:root}
     password: ${MYSQL_PASSWORD:}
     driver-class-name: com.mysql.cj.jdbc.Driver
-  jpa:
-    hibernate:
-      ddl-auto: update
-    show-sql: true
-    properties:
-      hibernate:
-        dialect: org.hibernate.dialect.MySQL8Dialect
   data:
     redis:
       host: localhost
-      port: 6379
-  servlet:
-    multipart:
-      enabled: true
-      max-file-size: 50MB # 单个文件的最大大小
-      max-request-size: 100MB # 整个请求的最大大小
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
   kafka:
-    enabled: true  # 启用 Kafka
-    bootstrap-servers: 127.0.0.1:9092 # Kafka 服务器地址
-    producer:
-      key-serializer: org.apache.kafka.common.serialization.StringSerializer
-      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
-      acks: all
-      retries: 3
-      enable-idempotence: true
-      transactional-id-prefix: file-upload-tx-
-      properties:
-        client.dns.lookup: use_all_dns_ips
-    consumer:
-      group-id: file-processing-group # 消费者组 ID
-      auto-offset-reset: earliest
-      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
-      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
-      properties:
-        spring.json.trusted.packages: "*" # 允许反序列化的包
-        client.dns.lookup: use_all_dns_ips
-        max.poll.interval.ms: 1800000
-        max.poll.records: 1
+    bootstrap-servers: 127.0.0.1:${KAFKA_PORT:9092}
     topic:
-      file-processing: file-processing-topic1 # 新增的 Topic 配置
-      dlt: file-processing-dlt # 死信队列主题
-  webflux:
-    client:
-      max-in-memory-size: 16MB  # 增加响应大小限制
-  codec:
-    max-in-memory-size: 16MB    # 增加编解码大小限制
-
+      file-processing: ${KAFKA_FILE_PROCESSING_TOPIC:file-processing-topic1}
+      dlt: ${KAFKA_FILE_PROCESSING_DLT_TOPIC:file-processing-dlt}
 
 minio:
-    endpoint: http://localhost:9000
-    accessKey: ${MINIO_ACCESS_KEY:minioadmin}
-    secretKey: ${MINIO_SECRET_KEY:minioadmin}
-    bucketName: uploads
-    publicUrl: http://localhost:9000
-jwt:
-  secret-key: ${JWT_SECRET_KEY:change-me-in-local-dev-only}
+  endpoint: http://localhost:${MINIO_API_PORT:9000}
+  accessKey: ${MINIO_ACCESS_KEY:minioadmin}
+  secretKey: ${MINIO_SECRET_KEY:minioadmin}
+  bucketName: ${MINIO_BUCKET:uploads}
+  publicUrl: http://localhost:${MINIO_API_PORT:9000}
 
-# 管理员账号初始化配置
-admin:
-  username: ${ADMIN_USERNAME:admin}
-  password: ${ADMIN_PASSWORD:${MYSQL_PASSWORD:admin123}}
-  email: ${ADMIN_EMAIL:}
-  primary-org: default
-  org-tags: default,admin
+elasticsearch:
+  host: localhost
+  port: ${ELASTICSEARCH_PORT:9200}
+  scheme: http
+  username: ${ELASTICSEARCH_USERNAME:}
+  password: ${ELASTICSEARCH_PASSWORD:}
 
 file:
   parsing:
-    chunk-size: 512 # 每个文本块的最大字符数
-    min-chunk-size: 256 # 用户可配置文本块大小下限
-    max-chunk-size: 1024 # 用户可配置文本块大小上限
     mineru:
       base-url: ${MINERU_BASE_URL:}
-      parse-path: ${MINERU_PARSE_PATH:/file_parse}
-      backend: ${MINERU_BACKEND:hybrid-auto-engine}
-      parse-method: ${MINERU_PARSE_METHOD:auto}
-      ocr: ${MINERU_OCR:false}
-      enable-table: ${MINERU_ENABLE_TABLE:false}
-      enable-formula: ${MINERU_ENABLE_FORMULA:false}
-      fallback-to-tika: true
-
-elasticsearch:
-  host: localhost       # Elasticsearch主机地址
-  port: 9200            # Elasticsearch端口号
-  scheme: http          # 协议（http/https）
-
-logging:
-  level:
-    org.springframework.web: DEBUG
-    org.springframework.boot.autoconfigure.web.servlet: DEBUG
-    org.springframework.security: DEBUG
-    com.luky.nexusmind.service: DEBUG
-    io.minio: DEBUG
-
-log4j:
-  logger:
-    org:
-      apache:
-        tika=DEBUG:
-
-deepseek:
-  api:
-    url: https://api.deepseek.com/v1
-    key: ${DEEPSEEK_API_KEY:}
-    # DeepSeek API Key
-
-embedding:
-  api:
-    url: https://dashscope.aliyuncs.com/compatible-mode/v1
-    key: ${EMBEDDING_API_KEY:}   # 填入通义千问API key
-    model: text-embedding-v4
-    batch-size: 10  # 单次请求最大行数（DashScope限制为10）
-    dimension: 2048  # 指定向量维度
 
 langfuse:
   tracing:
     enabled: ${LANGFUSE_TRACING_ENABLED:false}
-    base-url: ${LANGFUSE_BASE_URL:https://cloud.langfuse.com}
+    base-url: ${LANGFUSE_BASE_URL:https://us.cloud.langfuse.com}
     public-key: ${LANGFUSE_PUBLIC_KEY:}
     secret-key: ${LANGFUSE_SECRET_KEY:}
     environment: ${LANGFUSE_TRACING_ENVIRONMENT:dev}

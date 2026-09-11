@@ -8,6 +8,8 @@ import com.luky.nexusmind.service.EmailVerificationService;
 import com.luky.nexusmind.utils.JwtUtils;
 import com.luky.nexusmind.utils.LogUtils;
 import org.springframework.beans.factory.annotation.Autowired;
+import com.luky.nexusmind.service.LoginRateLimitService;
+import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.dao.DataAccessResourceFailureException;
@@ -36,6 +38,9 @@ public class UserController {
     @Autowired
     private EmailVerificationService emailVerificationService;
 
+    @Autowired
+    private LoginRateLimitService loginRateLimitService;
+
     @PostMapping("/registration-code")
     public ResponseEntity<?> registrationCode(@RequestBody RegistrationEmailRequest request) {
         emailVerificationService.requestRegistration(request.email());
@@ -49,10 +54,20 @@ public class UserController {
     }
 
     @PostMapping("/reset-password")
-    public ResponseEntity<?> resetPassword(@RequestBody ResetPasswordRequest request) {
-        Long userId = userService.resetPassword(request.email(), request.verificationCode(), request.password());
-        jwtUtils.invalidateAllUserTokens(userId.toString());
-        return ResponseEntity.ok(Map.of("code", 200, "message", "密码已重置，请重新登录"));
+    public ResponseEntity<?> resetPassword(@RequestBody ResetPasswordRequest request, HttpServletRequest http) {
+        String rateKey = "reset:" + clientIp(http);
+        if (loginRateLimitService.isLocked(rateKey)) {
+            return ResponseEntity.status(429).body(Map.of("code", 429, "message", "重置尝试过于频繁，请稍后再试"));
+        }
+        try {
+            Long userId = userService.resetPassword(request.email(), request.verificationCode(), request.password());
+            loginRateLimitService.recordSuccess(rateKey);
+            jwtUtils.invalidateAllUserTokens(userId.toString());
+            return ResponseEntity.ok(Map.of("code", 200, "message", "密码已重置，请重新登录"));
+        } catch (Exception e) {
+            loginRateLimitService.recordFailure(rateKey);
+            throw e;
+        }
     }
 
     @PostMapping("/register")
@@ -77,21 +92,30 @@ public class UserController {
     // 用户登录接口
     // 验证用户身份并生成JWT令牌
     @PostMapping("/login")
-    public ResponseEntity<?> login(@RequestBody LoginRequest request) {
+    public ResponseEntity<?> login(@RequestBody LoginRequest request, HttpServletRequest http) {
         LogUtils.PerformanceMonitor monitor = LogUtils.startPerformanceMonitor("USER_LOGIN");
+        String rateKey = "ip:" + clientIp(http);
         try {
+            if (loginRateLimitService.isLocked(rateKey)) {
+                LogUtils.logUserOperation("anonymous", "LOGIN", "rate_limit", "LOCKED");
+                monitor.end("登录过于频繁");
+                return ResponseEntity.status(429).body(Map.of("code", 429,
+                        "message", "登录尝试过于频繁，请" + loginRateLimitService.lockTtlSeconds(rateKey) + "秒后再试"));
+            }
             if (request.email() == null || request.email().isEmpty() ||
                     request.password() == null || request.password().isEmpty()) {
                 LogUtils.logUserOperation("anonymous", "LOGIN", "validation", "FAILED_EMPTY_PARAMS");
                 return ResponseEntity.badRequest().body(Map.of("code", 400, "message", "邮箱和密码不能为空"));
             }
-            
+
             String username = userService.authenticateUser(request.email(), request.password());
             if (username == null) {
+                loginRateLimitService.recordFailure(rateKey);
                 LogUtils.logUserOperation("anonymous", "LOGIN", "authentication", "FAILED_INVALID_CREDENTIALS");
                 return ResponseEntity.status(401).body(Map.of("code", 401, "message", "邮箱或密码错误"));
             }
-            
+            loginRateLimitService.recordSuccess(rateKey);
+
             String token = jwtUtils.generateToken(username);
             String refreshToken = jwtUtils.generateRefreshToken(username);
             LogUtils.logUserOperation(username, "LOGIN", "token_generation", "SUCCESS");
@@ -114,6 +138,14 @@ public class UserController {
             }
             return ResponseEntity.status(500).body(Map.of("code", 500, "message", "服务器内部错误"));
         }
+    }
+
+    private String clientIp(HttpServletRequest http) {
+        String forwarded = http == null ? null : http.getHeader("X-Forwarded-For");
+        if (forwarded != null && !forwarded.isBlank()) {
+            return forwarded.split(",")[0].trim();
+        }
+        return http == null || http.getRemoteAddr() == null ? "unknown" : http.getRemoteAddr();
     }
 
     private boolean isDatabaseUnavailable(Throwable error) {
