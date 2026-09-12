@@ -144,7 +144,12 @@ public class ParseService {
         logger.info("开始使用MinerU解析文件，fileMd5: {}, fileName: {}, userId: {}, orgTag: {}, isPublic: {}",
                 fileMd5, fileName, userId, orgTag, isPublic);
 
-        byte[] fileBytes = fileStream.readAllBytes();
+        checkMemoryThreshold();
+        // MinerU 客户端要求 byte[]，读取前设上限，避免大文件把解析进程堆耗尽。
+        byte[] fileBytes = fileStream.readNBytes(50 * 1024 * 1024 + 1);
+        if (fileBytes.length > 50 * 1024 * 1024) {
+            throw new IOException("MinerU 解析文件不能超过 50MB，请选择 Tika 解析");
+        }
         AiTraceService.TraceSpan span = aiTraceService.startFileSpan("file.parse.mineru", userId, fileMd5, fileName)
                 .attribute("nexusmind.org_tag", orgTag)
                 .attribute("nexusmind.upload.is_public", isPublic)

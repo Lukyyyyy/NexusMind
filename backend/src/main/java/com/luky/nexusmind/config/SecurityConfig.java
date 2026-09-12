@@ -66,8 +66,10 @@ public class SecurityConfig {
                             .requestMatchers("/api/v1/documents/preview/pdf").permitAll()
                             // SSE 事件流使用一次性短期票据，避免把登录 JWT 放入 URL。
                             .requestMatchers("/api/v1/upload/status/events").permitAll()
+                            // 历史直传解析入口缺少文件所有权上下文，统一走上传、合并、异步处理链路。
+                            .requestMatchers("/api/v1/parse", "/api/v1/parse/**").denyAll()
                             // 文件上传和下载相关接口 - 普通用户和管理员都可访问
-                            .requestMatchers("/api/v1/upload/**", "/api/v1/parse", "/api/v1/documents/download", "/api/v1/documents/preview").hasAnyRole("USER", "ADMIN", "SUPER_ADMIN")
+                            .requestMatchers("/api/v1/upload/**", "/api/v1/documents/download", "/api/v1/documents/preview").hasAnyRole("USER", "ADMIN", "SUPER_ADMIN")
                             // 对话历史相关接口 - 用户只能查看自己的历史，管理员可以查看所有
                             .requestMatchers("/api/v1/users/conversation/**").hasAnyRole("USER", "ADMIN", "SUPER_ADMIN")
                             // 搜索接口 - 普通用户和管理员都可访问
