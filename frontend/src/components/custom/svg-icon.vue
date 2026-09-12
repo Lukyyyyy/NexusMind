@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, useAttrs } from 'vue';
-import { Icon } from '@iconify/vue';
+import { Icon } from '@iconify/vue/offline';
 
 defineOptions({ name: 'SvgIcon', inheritAttrs: false });
 

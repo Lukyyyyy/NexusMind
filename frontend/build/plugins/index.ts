@@ -8,8 +8,10 @@ import { setupUnocss } from './unocss';
 import { setupUnplugin } from './unplugin';
 import { setupHtmlPlugin } from './html';
 import { setupDevtoolsPlugin } from './devtools';
+import { setupLocalIconify } from './local-iconify';
 export function setupVitePlugins(viteEnv: Env.ImportMeta, buildTime: string) {
   const plugins: PluginOption = [
+    setupLocalIconify(),
     vue(),
     vueJsx(),
     setupDevtoolsPlugin(viteEnv),

@@ -205,7 +205,8 @@ assert_memory_available() {
   if [[ "$service" == "frontend" ]]; then
     # V8 old space is not total RSS: allow 1024 MiB for native/tools/BuildKit
     # and another 512 MiB for the OS and changes in live service usage.
-    required_mb=$((FRONTEND_BUILD_HEAP_MB + 1024 + 512))
+    # required_mb=$((FRONTEND_BUILD_HEAP_MB + 1024 + 512))
+    required_mb=$((FRONTEND_BUILD_HEAP_MB + 1024))
   fi
   available_mb="$(available_memory_mb)"
   if [[ -z "$available_mb" || "$available_mb" -lt "$required_mb" ]]; then

@@ -1,10 +1,9 @@
-import { addAPIProvider } from '@iconify/vue';
+import { addIcon } from '@iconify/vue/offline';
+import localIconifyIcons from 'virtual:nexusmind-iconify';
 
-/** Setup the iconify offline */
+/** Register the Iconify icons embedded by the Vite build. */
 export function setupIconifyOffline() {
-  const { VITE_ICONIFY_URL } = import.meta.env;
-
-  if (VITE_ICONIFY_URL) {
-    addAPIProvider('', { resources: [VITE_ICONIFY_URL] });
+  for (const [name, icon] of Object.entries(localIconifyIcons)) {
+    addIcon(name, icon);
   }
 }
