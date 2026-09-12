@@ -35,7 +35,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     /**
      * 每次请求都会调用此方法，用于解析 JWT Token 并设置用户认证信息。
-     * 实现无感知的token自动刷新机制。
+     * 仅接受有效 access token；过期后必须使用单次消费的 refresh token 主动刷新。
      */
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
@@ -44,7 +44,6 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             // 从请求头中提取 JWT Token
             String token = extractToken(request);
             if (token != null) {
-                String newToken = null;
                 String username = null;
                 UserDetails userDetails = null;
 
@@ -61,28 +60,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                 
                 // 首先检查token是否有效
                 if (jwtUtils.validateToken(token)) {
-                    // Token有效，检查是否需要预刷新
-                    if (jwtUtils.shouldRefreshToken(token)) {
-                        newToken = jwtUtils.refreshToken(token);
-                        if (newToken != null) {
-                            logger.debug("Token auto-refreshed proactively");
-                        }
-                    }
                     username = jwtUtils.extractUsernameFromToken(token);
-                } else {
-                    // Token无效/过期，检查是否在宽限期内可以刷新
-                    if (jwtUtils.canRefreshExpiredToken(token)) {
-                        newToken = jwtUtils.refreshToken(token);
-                        if (newToken != null) {
-                            logger.debug("Expired token refreshed within grace period");
-                            username = jwtUtils.extractUsernameFromToken(newToken);
-                        }
-                    }
-                }
-                
-                // 如果有新token，通过响应头返回给前端
-                if (newToken != null) {
-                    response.setHeader("New-Token", newToken);
                 }
                 
                 // 设置用户认证信息

@@ -21,10 +21,14 @@ interface FormModel {
 }
 
 const rememberedLogin = localStg.get('rememberedLogin');
+if (rememberedLogin) {
+  // 重写旧结构，立即清除历史版本曾保存到 localStorage 的明文密码字段。
+  localStg.set('rememberedLogin', { email: rememberedLogin.email || '', remember: Boolean(rememberedLogin.remember) });
+}
 
 const model: FormModel = reactive({
   email: rememberedLogin?.email || '',
-  password: rememberedLogin?.password || '',
+  password: '',
   remember: rememberedLogin?.remember || false
 });
 
@@ -49,7 +53,6 @@ async function handleSubmit() {
   if (model.remember) {
     localStg.set('rememberedLogin', {
       email: model.email.trim().toLowerCase(),
-      password: model.password,
       remember: true
     });
   } else {
@@ -86,7 +89,7 @@ async function handleSubmit() {
       </NInput>
     </NFormItem>
     <div class="login-options">
-      <NCheckbox v-model:checked="model.remember">自动登录</NCheckbox>
+      <NCheckbox v-model:checked="model.remember">记住邮箱</NCheckbox>
       <button type="button" class="forgot-link" @click="toggleLoginModule('reset-pwd')">忘记密码</button>
     </div>
     <div class="login-actions">

@@ -46,7 +46,7 @@ public class AuthController {
             }
 
             // 验证refreshToken是否有效（这里我们用相同的验证逻辑）
-            if (!jwtUtils.validateRefreshToken(request.refreshToken())) {
+            if (!jwtUtils.consumeRefreshToken(request.refreshToken())) {
                 LogUtils.logUserOperation("anonymous", "REFRESH_TOKEN", "validation", "FAILED_INVALID_REFRESH_TOKEN");
                 monitor.end("刷新token失败：refreshToken无效");
                 return ResponseEntity.status(401).body(Map.of("code", 401, "message", "刷新令牌无效"));
@@ -61,8 +61,8 @@ public class AuthController {
             }
 
             // 生成新的token和refreshToken
-            String newToken = jwtUtils.generateToken(username);
             String newRefreshToken = jwtUtils.generateRefreshToken(username);
+            String newToken = jwtUtils.generateToken(username, jwtUtils.extractRefreshTokenIdFromToken(newRefreshToken));
 
             LogUtils.logUserOperation(username, "REFRESH_TOKEN", "token_generation", "SUCCESS");
             monitor.end("刷新token成功");

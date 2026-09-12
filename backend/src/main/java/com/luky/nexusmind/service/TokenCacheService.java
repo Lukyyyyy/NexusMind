@@ -125,6 +125,29 @@ public class TokenCacheService {
             return false;
         }
     }
+
+    /** 原子消费刷新令牌，两个并发刷新请求最多只能有一个成功。 */
+    @SuppressWarnings("unchecked")
+    public boolean consumeRefreshToken(String refreshTokenId, String userId) {
+        Object removed = redisTemplate.opsForValue().getAndDelete(REFRESH_PREFIX + refreshTokenId);
+        if (!(removed instanceof Map<?, ?> info) || !userId.equals(info.get("userId"))) return false;
+        redisTemplate.opsForSet().remove(USER_TOKENS_PREFIX + userId + USER_REFRESH_TOKENS_SUFFIX, refreshTokenId);
+        return true;
+    }
+
+    public void removeRefreshToken(String refreshTokenId, String userId) {
+        redisTemplate.delete(REFRESH_PREFIX + refreshTokenId);
+        redisTemplate.opsForSet().remove(USER_TOKENS_PREFIX + userId + USER_REFRESH_TOKENS_SUFFIX, refreshTokenId);
+    }
+
+    public void removeAllUserRefreshTokens(String userId) {
+        String key = USER_TOKENS_PREFIX + userId + USER_REFRESH_TOKENS_SUFFIX;
+        Set<Object> ids = redisTemplate.opsForSet().members(key);
+        if (ids != null && !ids.isEmpty()) {
+            redisTemplate.delete(ids.stream().map(id -> REFRESH_PREFIX + id).toList());
+        }
+        redisTemplate.delete(key);
+    }
     
     /**
      * 获取refresh token信息
@@ -207,12 +230,7 @@ public class TokenCacheService {
             // 清空用户token集合
             redisTemplate.delete(userTokenKey);
 
-            String refreshTokenKey = USER_TOKENS_PREFIX + userId + USER_REFRESH_TOKENS_SUFFIX;
-            Set<Object> refreshTokenIds = redisTemplate.opsForSet().members(refreshTokenKey);
-            if (refreshTokenIds != null && !refreshTokenIds.isEmpty()) {
-                redisTemplate.delete(refreshTokenIds.stream().map(id -> REFRESH_PREFIX + id).toList());
-            }
-            redisTemplate.delete(refreshTokenKey);
+            removeAllUserRefreshTokens(userId);
             
             logger.info("All tokens removed for user: {}", userId);
         } catch (Exception e) {

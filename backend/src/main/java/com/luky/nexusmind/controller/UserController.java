@@ -10,6 +10,7 @@ import com.luky.nexusmind.utils.LogUtils;
 import org.springframework.beans.factory.annotation.Autowired;
 import com.luky.nexusmind.service.LoginRateLimitService;
 import jakarta.servlet.http.HttpServletRequest;
+import org.apache.commons.codec.digest.DigestUtils;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.dao.DataAccessResourceFailureException;
@@ -94,13 +95,17 @@ public class UserController {
     @PostMapping("/login")
     public ResponseEntity<?> login(@RequestBody LoginRequest request, HttpServletRequest http) {
         LogUtils.PerformanceMonitor monitor = LogUtils.startPerformanceMonitor("USER_LOGIN");
-        String rateKey = "ip:" + clientIp(http);
+        String normalizedEmail = request.email() == null ? "" : request.email().trim().toLowerCase(java.util.Locale.ROOT);
+        List<String> rateKeys = List.of(
+                "ip:" + clientIp(http),
+                "email:" + DigestUtils.sha256Hex(normalizedEmail));
         try {
-            if (loginRateLimitService.isLocked(rateKey)) {
+            String lockedKey = rateKeys.stream().filter(loginRateLimitService::isLocked).findFirst().orElse(null);
+            if (lockedKey != null) {
                 LogUtils.logUserOperation("anonymous", "LOGIN", "rate_limit", "LOCKED");
                 monitor.end("登录过于频繁");
                 return ResponseEntity.status(429).body(Map.of("code", 429,
-                        "message", "登录尝试过于频繁，请" + loginRateLimitService.lockTtlSeconds(rateKey) + "秒后再试"));
+                        "message", "登录尝试过于频繁，请" + loginRateLimitService.lockTtlSeconds(lockedKey) + "秒后再试"));
             }
             if (request.email() == null || request.email().isEmpty() ||
                     request.password() == null || request.password().isEmpty()) {
@@ -108,16 +113,24 @@ public class UserController {
                 return ResponseEntity.badRequest().body(Map.of("code", 400, "message", "邮箱和密码不能为空"));
             }
 
-            String username = userService.authenticateUser(request.email(), request.password());
+            String username;
+            try {
+                username = userService.authenticateUser(request.email(), request.password());
+            } catch (CustomException e) {
+                if (e.getStatus() == HttpStatus.UNAUTHORIZED) {
+                    rateKeys.forEach(loginRateLimitService::recordFailure);
+                }
+                throw e;
+            }
             if (username == null) {
-                loginRateLimitService.recordFailure(rateKey);
+                rateKeys.forEach(loginRateLimitService::recordFailure);
                 LogUtils.logUserOperation("anonymous", "LOGIN", "authentication", "FAILED_INVALID_CREDENTIALS");
                 return ResponseEntity.status(401).body(Map.of("code", 401, "message", "邮箱或密码错误"));
             }
-            loginRateLimitService.recordSuccess(rateKey);
+            rateKeys.forEach(loginRateLimitService::recordSuccess);
 
-            String token = jwtUtils.generateToken(username);
             String refreshToken = jwtUtils.generateRefreshToken(username);
+            String token = jwtUtils.generateToken(username, jwtUtils.extractRefreshTokenIdFromToken(refreshToken));
             LogUtils.logUserOperation(username, "LOGIN", "token_generation", "SUCCESS");
             monitor.end("登录成功");
             
@@ -141,9 +154,14 @@ public class UserController {
     }
 
     private String clientIp(HttpServletRequest http) {
+        String realIp = http == null ? null : http.getHeader("X-Real-IP");
+        if (realIp != null && !realIp.isBlank()) {
+            return realIp.trim();
+        }
         String forwarded = http == null ? null : http.getHeader("X-Forwarded-For");
         if (forwarded != null && !forwarded.isBlank()) {
-            return forwarded.split(",")[0].trim();
+            String[] values = forwarded.split(",");
+            return values[values.length - 1].trim();
         }
         return http == null || http.getRemoteAddr() == null ? "unknown" : http.getRemoteAddr();
     }

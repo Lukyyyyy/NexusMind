@@ -27,7 +27,7 @@ public class LoginRateLimitService {
         try {
             return Boolean.TRUE.equals(redis.hasKey(lockKey(key)));
         } catch (Exception e) {
-            return false;
+            throw new IllegalStateException("登录限流不可用", e);
         }
     }
 
@@ -42,14 +42,16 @@ public class LoginRateLimitService {
                 redis.opsForValue().set(lockKey(key), "1", Duration.ofSeconds(lockSeconds));
                 redis.delete(counter);
             }
-        } catch (Exception ignored) {
+        } catch (Exception e) {
+            throw new IllegalStateException("登录限流不可用", e);
         }
     }
 
     public void recordSuccess(String key) {
         try {
             redis.delete(counterKey(key));
-        } catch (Exception ignored) {
+        } catch (Exception e) {
+            throw new IllegalStateException("登录限流不可用", e);
         }
     }
 

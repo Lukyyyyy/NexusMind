@@ -17,6 +17,7 @@ import java.util.Optional;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.*;
 
 /**
  * JWT Token刷新机制测试
@@ -66,6 +67,20 @@ public class JwtUtilsRefreshTest {
         // 提取用户名
         String username = jwtUtils.extractUsernameFromToken(token);
         assertEquals("testuser", username);
+    }
+
+    @Test
+    void refreshTokenIsConsumedOnceAndLogoutRevokesItsPair() {
+        String refresh = jwtUtils.generateRefreshToken("testuser");
+        String id = jwtUtils.extractRefreshTokenIdFromToken(refresh);
+        lenient().when(tokenCacheService.isRefreshTokenValid(id)).thenReturn(true);
+        when(tokenCacheService.consumeRefreshToken(id, "1")).thenReturn(true, false);
+        assertTrue(jwtUtils.consumeRefreshToken(refresh));
+        assertFalse(jwtUtils.consumeRefreshToken(refresh));
+
+        String access = jwtUtils.generateToken("testuser", id);
+        jwtUtils.invalidateToken(access);
+        verify(tokenCacheService).removeRefreshToken(id, "1");
     }
 
     @Test

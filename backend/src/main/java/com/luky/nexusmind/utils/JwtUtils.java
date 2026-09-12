@@ -75,6 +75,10 @@ public class JwtUtils {
      * 生成 JWT Token（集成Redis缓存）
      */
     public String generateToken(String username) {
+        return generateToken(username, null);
+    }
+
+    public String generateToken(String username, String refreshTokenId) {
         SecretKey key = getSigningKey(); // 解析密钥
         
         // 获取用户信息
@@ -92,6 +96,7 @@ public class JwtUtils {
         claims.put("role", user.getRole().name());
         claims.put("userId", user.getId().toString()); // 添加用户ID到JWT
         claims.put("sessionVersion", user.getSessionVersion());
+        if (refreshTokenId != null) claims.put("refreshTokenId", refreshTokenId);
         
         // 添加组织标签信息
         if (user.getOrgTags() != null && !user.getOrgTags().isEmpty()) {
@@ -265,7 +270,8 @@ public class JwtUtils {
      */
     public String refreshToken(String oldToken) {
         try {
-            Claims claims = extractClaimsIgnoreExpiration(oldToken);
+            if (!validateToken(oldToken)) return null;
+            Claims claims = extractClaims(oldToken);
             if (claims == null) return null;
             
             String username = claims.getSubject();
@@ -399,6 +405,13 @@ public class JwtUtils {
         }
         return false;
     }
+
+    public boolean consumeRefreshToken(String refreshToken) {
+        if (!validateRefreshToken(refreshToken)) return false;
+        Claims claims = extractClaims(refreshToken);
+        return claims != null && tokenCacheService.consumeRefreshToken(
+                claims.get("refreshTokenId", String.class), claims.get("userId", String.class));
+    }
     
     /**
      * 从 JWT Token 中提取refreshTokenId
@@ -445,6 +458,13 @@ public class JwtUtils {
                     long expireTime = claims.getExpiration().getTime();
                     String userId = claims.get("userId", String.class);
                     
+                    String refreshTokenId = claims.get("refreshTokenId", String.class);
+                    if (refreshTokenId != null) {
+                        tokenCacheService.removeRefreshToken(refreshTokenId, userId);
+                    } else {
+                        // 存量 access token 没有关联 ID，只在过渡期回收该用户全部 refresh token。
+                        tokenCacheService.removeAllUserRefreshTokens(userId);
+                    }
                     // 加入黑名单
                     tokenCacheService.blacklistToken(tokenId, expireTime);
                     // 从缓存中移除
@@ -455,6 +475,7 @@ public class JwtUtils {
             }
         } catch (Exception e) {
             logger.error("Error invalidating token", e);
+            throw e;
         }
     }
     
