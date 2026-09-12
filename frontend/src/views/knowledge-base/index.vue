@@ -27,6 +27,7 @@ const deletedDocumentIds = new Set<number>();
 // 文件预览相关状态
 const previewVisible = ref(false);
 const previewFileName = ref('');
+const previewFileMd5 = ref('');
 const chunkVisible = ref(false);
 const chunkFileMd5 = ref('');
 const chunkFileName = ref('');
@@ -75,8 +76,9 @@ function renderIcon(fileName: string) {
 }
 
 // 处理文件预览
-function handleFilePreview(fileName: string) {
-  previewFileName.value = fileName;
+function handleFilePreview(row: Api.KnowledgeBase.UploadTask) {
+  previewFileName.value = row.fileName;
+  previewFileMd5.value = row.fileMd5;
   previewVisible.value = true;
 }
 
@@ -84,6 +86,7 @@ function handleFilePreview(fileName: string) {
 function closeFilePreview() {
   previewVisible.value = false;
   previewFileName.value = '';
+  previewFileMd5.value = '';
 }
 
 function handleChunkView(row: Api.KnowledgeBase.UploadTask) {
@@ -101,10 +104,10 @@ function handleGraphView(row: Api.KnowledgeBase.UploadTask) {
 
 function getFileActionOptions(row: Api.KnowledgeBase.UploadTask): DropdownOption[] {
   return [
-    ...(row.processingState === 'SUCCEEDED'
+    ...(!row.legacyShared && row.processingState === 'SUCCEEDED'
       ? [{ label: '就此文档提问', key: 'ask' }]
       : []),
-    ...(row.processingState === 'FAILED'
+    ...(!row.legacyShared && row.processingState === 'FAILED'
       ? [
           {
             label: retryingFileMd5.value === row.fileMd5 ? '正在重新处理' : '重新处理',
@@ -116,13 +119,13 @@ function getFileActionOptions(row: Api.KnowledgeBase.UploadTask): DropdownOption
     {
       label: '查看切片',
       key: 'chunks',
-      disabled: row.status !== UploadStatus.Completed
+      disabled: row.legacyShared || row.status !== UploadStatus.Completed
     },
     ...(canManageFile(row)
       ? [{
           label: graphActionLabel(row),
           key: 'graph',
-          disabled: row.status !== UploadStatus.Completed
+          disabled: row.legacyShared || row.status !== UploadStatus.Completed
         }]
       : []),
     ...(canManageFile(row)
@@ -254,7 +257,7 @@ const {
             <NEllipsis lineClamp={2} tooltip>
               <span
                 class="cursor-pointer text-14px text-#1f2937 transition-colors hover:text-primary"
-                onClick={() => handleFilePreview(row.fileName)}
+                onClick={() => { if (!row.legacyShared) handleFilePreview(row); }}
               >
                 {row.fileName}
               </span>
@@ -313,7 +316,8 @@ const {
             type="primary"
             ghost
             size="small"
-            onClick={() => handleFilePreview(row.fileName)}
+            disabled={row.legacyShared}
+            onClick={() => handleFilePreview(row)}
           >
             预览
           </NButton>
@@ -929,6 +933,7 @@ function formatParseEngine(engine?: Api.KnowledgeBase.UploadTask['actualParseEng
 }
 
 function formatProcessingSummary(row: Api.KnowledgeBase.UploadTask) {
+  if (row.legacyShared) return '旧文档索引需删除后重新上传；此期间无法预览或检索';
   if (typeof row.parsedChunkCount === 'number') return `${row.parsedChunkCount} 个切片`;
   if (typeof row.vectorizedCount === 'number') return `${row.vectorizedCount} 个向量`;
   if (typeof row.esDocumentCount === 'number') return `${row.esDocumentCount} 条索引`;
@@ -937,6 +942,7 @@ function formatProcessingSummary(row: Api.KnowledgeBase.UploadTask) {
 
 // #region 文件续传
 function renderResumeUploadButton(row: Api.KnowledgeBase.UploadTask) {
+  if (row.legacyShared) return null;
   if (row.status === UploadStatus.Break) {
     if (row.file)
       return (
@@ -972,7 +978,7 @@ async function onBeforeUpload(
   row: Api.KnowledgeBase.UploadTask
 ) {
   const md5 = await calculateMD5(options.file.file!);
-  if (md5 !== row.fileMd5) {
+  if (md5 !== (row.contentMd5 ?? row.fileMd5)) {
     window.$message?.error('两次上传的文件不一致');
     return false;
   }
@@ -1102,6 +1108,7 @@ async function onBeforeUpload(
     >
       <FilePreview
         :file-name="previewFileName"
+        :file-md5="previewFileMd5"
         :visible="previewVisible"
       />
     </NModal>

@@ -34,6 +34,7 @@ import { getServiceBaseURL } from '@/utils/service';
 
 interface Props {
   fileName: string;
+  fileMd5?: string;
   visible: boolean;
 }
 
@@ -54,8 +55,8 @@ const isHttpProxy = import.meta.env.DEV && import.meta.env.VITE_HTTP_PROXY === '
 const { baseURL } = getServiceBaseURL(import.meta.env, isHttpProxy);
 
 watch(
-  () => [props.fileName, props.visible] as const,
-  async ([newFileName, visible]) => {
+  () => [props.fileName, props.fileMd5, props.visible] as const,
+  async ([newFileName, , visible]) => {
     if (newFileName && visible) {
       await loadPreviewContent();
     } else if (!visible) {
@@ -82,6 +83,7 @@ function revokePreviewUrl() {
 
 async function loadPdfPreviewUrl() {
   const query = new URLSearchParams({ fileName: props.fileName });
+  if (props.fileMd5) query.set('fileMd5', props.fileMd5);
   const Authorization = getAuthorization();
 
   const response = await fetch(`${baseURL}/documents/preview/pdf?${query.toString()}`, {
@@ -129,7 +131,8 @@ async function loadPreviewContent() {
     }>({
       url: '/documents/preview',
       params: {
-        fileName: props.fileName
+        fileName: props.fileName,
+        fileMd5: props.fileMd5
       }
     });
     

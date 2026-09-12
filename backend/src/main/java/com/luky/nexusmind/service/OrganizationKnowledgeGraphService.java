@@ -126,6 +126,7 @@ public class OrganizationKnowledgeGraphService {
 
     private List<OrganizationScopeSelection> scopeSelections(String userId, String role) {
         List<FileUpload> accessible = documentService.getAccessibleFiles(userId, "", role).stream()
+                .filter(file -> !file.isLegacyShared())
                 .filter(file -> file.getOrgTag() != null && !file.getOrgTag().isBlank())
                 .toList();
         Set<String> memberships = isAdministrator(role)

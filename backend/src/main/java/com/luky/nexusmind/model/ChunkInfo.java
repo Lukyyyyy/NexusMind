@@ -13,8 +13,8 @@ import lombok.Data;
 @Table(
     name = "chunk_info",
     uniqueConstraints = @UniqueConstraint(
-        name = "uk_chunk_info_file_md5_chunk_index",
-        columnNames = {"file_md5", "chunk_index"}
+        name = "uk_chunk_info_file_owner_index",
+        columnNames = {"file_md5", "user_id", "chunk_index"}
     )
 )
 public class ChunkInfo {
@@ -32,6 +32,9 @@ public class ChunkInfo {
      */
     @Column(name = "file_md5", nullable = false, length = 32)
     private String fileMd5;
+
+    @Column(name = "user_id", nullable = false, length = 64)
+    private String userId;
 
     /**
      * 分块的索引号

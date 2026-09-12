@@ -15,16 +15,25 @@ import java.time.LocalDateTime;
 @Entity
 @Table(name = "file_upload")
 public class FileUpload {
-    /**
-     * 文件的唯一标识符
-     * 使用文件的MD5值来唯一确定一个文件
-     */
+    /** Database identity for one user's document record. */
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id; // 自增主键
 
+    /** Legacy column name; new rows store a document key, not a content digest. */
     @Column(name = "file_md5", length = 32, nullable = false)
     private String fileMd5;
+
+    /** Upload checksum; also used for owner-and-organization duplicate detection. */
+    @Column(name = "content_md5", length = 32)
+    private String contentMd5;
+
+    @Column(name = "content_sha256", length = 64)
+    private String contentSha256;
+
+    /** Existing content-MD5 key was shared by multiple owners; never expose its pooled index. */
+    @Column(name = "legacy_shared", nullable = false)
+    private boolean legacyShared;
 
     /**
      * 文件的原始名称

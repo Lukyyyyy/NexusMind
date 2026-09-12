@@ -218,7 +218,7 @@ public class HybridSearchService {
 
         List<SearchResult> results = toSearchResults(response);
         logger.debug("返回搜索结果数量: {}", results.size());
-        attachFileNames(results);
+        results = attachFileNames(results);
         return results;
     }
 
@@ -271,7 +271,7 @@ public class HybridSearchService {
 
         List<SearchResult> ranked = applyRerank(query, fused, plan, span);
         List<SearchResult> results = ranked.size() > topK ? new ArrayList<>(ranked.subList(0, topK)) : ranked;
-        attachFileNames(results);
+        results = attachFileNames(results);
         attachFunnelOutput(span, knnHits, bm25Hits, fused, ranked, topK);
         return results;
     }
@@ -303,7 +303,7 @@ public class HybridSearchService {
             List<SearchResult> limited = ranked.size() > topK ? new ArrayList<>(ranked.subList(0, topK)) : ranked;
 
             logger.debug("返回纯文本搜索结果数量: {}", limited.size());
-            attachFileNames(limited);
+            limited = attachFileNames(limited);
             attachFunnelOutput(span, null, results, null, ranked, topK);
             return limited;
         } catch (Exception e) {
@@ -399,7 +399,7 @@ public class HybridSearchService {
             return s;
         }, EsDocument.class);
 
-        return toSearchResultsBasic(response);
+        return attachFileNames(toSearchResultsBasic(response));
     }
 
     /**
@@ -444,7 +444,7 @@ public class HybridSearchService {
                 .attribute("nexusmind.search.rrf_k", rrfK);
         List<SearchResult> ranked = applyRerank(query, fused, plan, span);
         attachFunnelOutput(span, knnHits, bm25Hits, fused, ranked, topK);
-        return ranked.size() > topK ? new ArrayList<>(ranked.subList(0, topK)) : ranked;
+        return attachFileNames(ranked.size() > topK ? new ArrayList<>(ranked.subList(0, topK)) : ranked);
     }
 
     /**
@@ -463,7 +463,7 @@ public class HybridSearchService {
         List<SearchResult> results = toSearchResultsBasic(response);
         List<SearchResult> ranked = applyRerank(query, results, plan, span);
         attachFunnelOutput(span, null, results, null, ranked, topK);
-        return ranked.size() > topK ? new ArrayList<>(ranked.subList(0, topK)) : ranked;
+        return attachFileNames(ranked.size() > topK ? new ArrayList<>(ranked.subList(0, topK)) : ranked);
     }
 
     private record RecallResult(boolean succeeded, List<SearchResult> hits) {
@@ -862,9 +862,9 @@ public class HybridSearchService {
         }
     }
 
-    private void attachFileNames(List<SearchResult> results) {
+    private List<SearchResult> attachFileNames(List<SearchResult> results) {
         if (results == null || results.isEmpty()) {
-            return;
+            return results;
         }
         try {
             // 收集所有唯一的 fileMd5
@@ -872,12 +872,18 @@ public class HybridSearchService {
                     .map(SearchResult::getFileMd5)
                     .collect(Collectors.toSet());
             List<FileUpload> uploads = fileUploadRepository.findByFileMd5In(new java.util.ArrayList<>(md5Set));
-            Map<String, String> md5ToName = uploads.stream()
-                    .collect(Collectors.toMap(FileUpload::getFileMd5, FileUpload::getFileName));
-            // 填充文件名
-            results.forEach(r -> r.setFileName(md5ToName.get(r.getFileMd5())));
+            Map<String, List<FileUpload>> byKey = uploads.stream()
+                    .collect(Collectors.groupingBy(FileUpload::getFileMd5));
+            // Old content-MD5 keys with multiple owners cannot identify one document safely.
+            List<SearchResult> safe = results.stream()
+                    .filter(r -> byKey.containsKey(r.getFileMd5()) && byKey.get(r.getFileMd5()).size() == 1
+                            && !byKey.get(r.getFileMd5()).get(0).isLegacyShared())
+                    .toList();
+            safe.forEach(r -> r.setFileName(byKey.get(r.getFileMd5()).get(0).getFileName()));
+            return safe;
         } catch (Exception e) {
             logger.error("补充文件名失败", e);
+            return List.of();
         }
     }
 }

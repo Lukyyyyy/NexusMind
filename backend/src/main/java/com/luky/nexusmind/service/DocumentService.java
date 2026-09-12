@@ -111,33 +111,50 @@ public class DocumentService {
         }
         
         try {
-            // 与图谱任务共用数据库行锁；重复请求等待前一次事务完成后再检查记录。
-            Optional<FileUpload> existing = fileUploadRepository.lockByMd5AndOwner(fileMd5, userId);
+            // 同 MD5 的所有引用按固定顺序上锁，跨用户并发删除不会误删共享资源。
+            List<FileUpload> references = fileUploadRepository.lockAllByMd5(fileMd5);
+            Optional<FileUpload> existing = references.stream()
+                    .filter(file -> userId.equals(file.getUserId())).findFirst();
             if (existing.isEmpty()) {
-                if (uploadService != null) uploadService.deleteUploadChunks(fileMd5, userId);
+                if (references.isEmpty() && uploadService != null) uploadService.deleteUploadChunks(fileMd5, userId);
                 if (taskControl != null) taskControl.finishDelete(fileMd5, userId);
                 return;
             }
             FileUpload fileUpload = existing.get();
 
             // 清理可重复执行。任一步失败都保留数据库记录，供用户重新执行删除。
-            parsedAssetService.delete(fileMd5);
             knowledgeGraphService.removeDocument(fileUpload);
-            elasticsearchService.deleteByFileMd5(fileMd5);
-            for (String objectName : com.luky.nexusmind.service.UploadService.mergedObjectCandidates(
-                    fileMd5, fileUpload.getFileName())) {
-                try {
-                    minioClient.removeObject(RemoveObjectArgs.builder()
-                            .bucket(minioBucketName)
-                            .object(objectName)
-                            .build());
-                } catch (Exception ignored) {
-                    // 旧 key 不存在时继续清理下一个候选 key
+            if (references.size() == 1) {
+                parsedAssetService.delete(fileMd5);
+                elasticsearchService.deleteByFileMd5(fileMd5);
+                List<String> objects = UploadService.isLegacyContentKey(fileUpload)
+                        ? UploadService.mergedObjectCandidates(fileMd5, fileUpload.getFileName())
+                        : List.of(UploadService.resolveMergedObject(fileMd5, fileUpload.getFileName()));
+                for (String objectName : objects) {
+                    try {
+                        if (objectName.equals(UploadService.resolveMergedObject(null, fileUpload.getFileName()))) {
+                            String expectedMd5 = fileUpload.getContentMd5() == null
+                                    ? fileMd5 : fileUpload.getContentMd5();
+                            try (InputStream verification = minioClient.getObject(GetObjectArgs.builder()
+                                    .bucket(minioBucketName).object(objectName).build())) {
+                                if (!expectedMd5.equalsIgnoreCase(
+                                        org.apache.commons.codec.digest.DigestUtils.md5Hex(verification))) {
+                                    continue;
+                                }
+                            }
+                        }
+                        minioClient.removeObject(RemoveObjectArgs.builder()
+                                .bucket(minioBucketName)
+                                .object(objectName)
+                                .build());
+                    } catch (Exception ignored) {
+                        // 旧 key 不存在时继续清理下一个候选 key
+                    }
                 }
+                documentVectorRepository.deleteByFileMd5(fileMd5);
             }
 
             if (uploadService != null) uploadService.deleteUploadChunks(fileMd5, userId);
-            documentVectorRepository.deleteByFileMd5(fileMd5);
             processingStatusService.delete(fileMd5, userId);
             // 只删除已锁定且经过所有者校验的记录。
             fileUploadRepository.delete(fileUpload);
@@ -349,7 +366,7 @@ public class DocumentService {
 
     private FileUpload getAccessibleFileOrThrow(String fileMd5, String userId, String orgTags) {
         return getAccessibleFiles(userId, orgTags).stream()
-                .filter(file -> file.getFileMd5().equals(fileMd5))
+                .filter(file -> file.getFileMd5().equals(fileMd5) && !file.isLegacyShared())
                 .findFirst()
                 .orElseThrow(() -> new RuntimeException("文件不存在或无权限访问"));
     }
@@ -409,6 +426,7 @@ public class DocumentService {
             // 从数据库获取文件信息
             FileUpload fileUpload = fileUploadRepository.findByFileMd5(fileMd5)
                     .orElseThrow(() -> new RuntimeException("文件不存在: " + fileMd5));
+            if (fileUpload.isLegacyShared()) throw new IllegalStateException("旧文档索引需要重新上传");
             
             String downloadUrl = downloadTickets.createUrl(fileMd5);
 
@@ -443,9 +461,25 @@ public class DocumentService {
     }
 
     private InputStream openMergedByMd5(String fileMd5, String fileName) throws Exception {
+        if (fileMd5 == null) throw new IllegalArgumentException("缺少文档标识");
+        FileUpload file = fileUploadRepository.findByFileMd5(fileMd5)
+                .orElseThrow(() -> new IllegalArgumentException("文件不存在"));
+        if (file.isLegacyShared()) throw new IllegalStateException("旧文档索引需要重新上传");
         Exception primary = null;
-        for (String objectName : com.luky.nexusmind.service.UploadService.mergedObjectCandidates(fileMd5, fileName)) {
+        List<String> objects = UploadService.isLegacyContentKey(file)
+                ? UploadService.mergedObjectCandidates(fileMd5, fileName)
+                : List.of(UploadService.resolveMergedObject(fileMd5, fileName));
+        for (String objectName : objects) {
             try {
+                if (objects.size() > 1 && objectName.equals(UploadService.resolveMergedObject(null, fileName))) {
+                    String expectedMd5 = file.getContentMd5() == null ? fileMd5 : file.getContentMd5();
+                    try (InputStream verification = minioClient.getObject(GetObjectArgs.builder()
+                            .bucket(minioBucketName).object(objectName).build())) {
+                        if (!expectedMd5.equalsIgnoreCase(org.apache.commons.codec.digest.DigestUtils.md5Hex(verification))) {
+                            throw new SecurityException("旧文件对象与上传摘要不一致");
+                        }
+                    }
+                }
                 return minioClient.getObject(
                         GetObjectArgs.builder()
                                 .bucket(minioBucketName)

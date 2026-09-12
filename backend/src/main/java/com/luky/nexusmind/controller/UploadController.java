@@ -89,9 +89,33 @@ public class UploadController {
     private com.luky.nexusmind.service.FileTaskControl taskControl;
 
     @GetMapping("/generation")
-    public ResponseEntity<?> uploadGeneration(@RequestParam String fileMd5, @RequestAttribute("userId") String userId) {
+    public ResponseEntity<?> uploadGeneration(@RequestParam String fileMd5,
+                                              @RequestParam String contentSha256,
+                                              @RequestParam(required = false) String orgTag,
+                                              @RequestAttribute("userId") String userId) {
         try {
-            return ResponseEntity.ok(Map.of("code", 200, "data", Map.of("generation", taskControl.uploadGeneration(fileMd5, userId))));
+            if (orgTag == null || orgTag.isBlank()) orgTag = userService.getUserPrimaryOrg(userId);
+            orgTag = userService.validateUploadOrgTag(userId, orgTag);
+            String checksum = fileMd5.toLowerCase(java.util.Locale.ROOT);
+            String sha256 = contentSha256.toLowerCase(java.util.Locale.ROOT);
+            String documentKey = com.luky.nexusmind.service.DocumentIdentity.key(userId, orgTag, sha256);
+            if (!checksum.matches("[a-f0-9]{32}")) return errorResponse(HttpStatus.BAD_REQUEST, "文件摘要无效");
+            Optional<FileUpload> duplicate = fileUploadRepository.findDuplicate(userId, orgTag, sha256, checksum);
+            if (duplicate.isPresent()) {
+                if (duplicate.get().isLegacyShared()) {
+                    return errorResponse(HttpStatus.CONFLICT, "旧文档索引存在共享风险，请删除后重新上传");
+                }
+                if (duplicate.get().getStatus() == 1) return errorResponse(HttpStatus.CONFLICT, "该组织中已存在此文件");
+                if (fileUploadRepository.countByFileMd5(duplicate.get().getFileMd5()) > 1) {
+                    return errorResponse(HttpStatus.CONFLICT, "旧文档标识存在多位所有者，请删除后重新上传");
+                }
+                documentKey = duplicate.get().getFileMd5();
+            }
+            return ResponseEntity.ok(Map.of("code", 200, "data", Map.of(
+                    "fileMd5", documentKey,
+                    "generation", taskControl.uploadGeneration(documentKey, userId))));
+        } catch (IllegalArgumentException e) {
+            return errorResponse(HttpStatus.BAD_REQUEST, e.getMessage());
         } catch (com.luky.nexusmind.service.FileTaskControl.Cancelled e) {
             return errorResponse(HttpStatus.CONFLICT, e.getMessage());
         }
@@ -119,6 +143,8 @@ public class UploadController {
     @PostMapping("/chunk")
     public ResponseEntity<Map<String, Object>> uploadChunk(
             @RequestParam("fileMd5") String fileMd5,
+            @RequestParam("contentMd5") String contentMd5,
+            @RequestParam("contentSha256") String contentSha256,
             @RequestParam("chunkIndex") int chunkIndex,
             @RequestParam("totalSize") long totalSize,
             @RequestParam("fileName") String fileName,
@@ -176,11 +202,12 @@ public class UploadController {
                 return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(errorResponse);
             }
         }
+        orgTag = userService.validateUploadOrgTag(userId, orgTag);
         
             LogUtils.logFileOperation(userId, "UPLOAD_CHUNK", fileName, fileMd5, "PROCESSING");
         
-            uploadService.uploadChunk(fileMd5, chunkIndex, totalSize, fileName, file, orgTag, isPublic,
-                    graphEnabled, graphPromptTemplateId, userId);
+            uploadService.uploadChunk(fileMd5, contentMd5, contentSha256, chunkIndex, totalSize, fileName,
+                    file, orgTag, isPublic, graphEnabled, graphPromptTemplateId, userId);
             
             int actualTotalChunks = resolveTotalChunks(totalChunks, totalSize);
             List<Integer> uploadedChunks = uploadService.getUploadedChunks(fileMd5, userId, actualTotalChunks);
@@ -202,6 +229,12 @@ public class UploadController {
             response.put("data", data);
             
             return ResponseEntity.ok(response);
+        } catch (com.luky.nexusmind.exception.CustomException e) {
+            monitor.end("分片上传失败: " + e.getMessage());
+            return errorResponse(e.getStatus(), e.getMessage());
+        } catch (IllegalArgumentException e) {
+            monitor.end("分片上传失败: " + e.getMessage());
+            return errorResponse(HttpStatus.BAD_REQUEST, e.getMessage());
         } catch (Exception e) {
             if (com.luky.nexusmind.service.FileTaskControl.isCancelled(e)) {
                 monitor.end("上传已取消");
@@ -347,6 +380,9 @@ public class UploadController {
         }
 
         FileUpload fileUpload = fileUploadOptional.get();
+        if (fileUpload.isLegacyShared()) {
+            return errorResponse(HttpStatus.CONFLICT, "旧文档索引存在共享风险，请删除后重新上传");
+        }
         if (fileUpload.getStatus() != 1) {
             return errorResponse(HttpStatus.CONFLICT, "文件尚未上传完成，请先完成上传");
         }

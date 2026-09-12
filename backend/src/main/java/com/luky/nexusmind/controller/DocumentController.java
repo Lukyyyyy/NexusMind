@@ -261,6 +261,9 @@ public class DocumentController {
             Map<String, Object> dto = new HashMap<>();
             dto.put("id", file.getId());
             dto.put("fileMd5", file.getFileMd5());
+            dto.put("contentMd5", file.getContentMd5() == null ? file.getFileMd5() : file.getContentMd5());
+            dto.put("contentSha256", file.getContentSha256());
+            dto.put("legacyShared", file.isLegacyShared());
             dto.put("fileName", file.getFileName());
             dto.put("totalSize", file.getTotalSize());
             dto.put("status", file.getStatus());
@@ -519,7 +522,8 @@ public class DocumentController {
 
     @GetMapping("/download")
     public ResponseEntity<?> downloadFileByName(
-            @RequestParam String fileName) {
+            @RequestParam String fileName,
+            @RequestParam(required = false) String fileMd5) {
 
         LogUtils.PerformanceMonitor monitor = LogUtils.startPerformanceMonitor("DOWNLOAD_FILE_BY_NAME");
         try {
@@ -530,15 +534,16 @@ public class DocumentController {
             // 如果没有登录态，只允许下载公开文件
             if (userId == null || !validSession(userId)) {
                 // 查找公开文件
-                Optional<FileUpload> publicFile = fileUploadRepository.findByFileNameAndIsPublicTrue(fileName);
-                if (publicFile.isEmpty()) {
+                List<FileUpload> publicFiles = matchingFiles(null, fileName, fileMd5);
+                if (publicFiles.isEmpty()) {
                     Map<String, Object> response = new HashMap<>();
                     response.put("code", HttpStatus.NOT_FOUND.value());
                     response.put("message", "文件不存在或需要登录访问");
                     return ResponseEntity.status(HttpStatus.NOT_FOUND).body(response);
                 }
 
-                FileUpload file = publicFile.get();
+                if (publicFiles.size() != 1) return ambiguousFileResponse();
+                FileUpload file = publicFiles.get(0);
                 String downloadUrl = documentService.generateDownloadUrl(file.getFileMd5());
 
                 if (downloadUrl == null) {
@@ -560,14 +565,8 @@ public class DocumentController {
             }
 
             // 登录态组织可见性由服务端实时计算，不再信任 token 声明。
-            List<FileUpload> accessibleFiles = documentService.getAccessibleFiles(userId, null);
-
-            // 根据文件名查找匹配的文件
-            Optional<FileUpload> targetFile = accessibleFiles.stream()
-                    .filter(file -> file.getFileName().equals(fileName))
-                    .findFirst();
-
-            if (targetFile.isEmpty()) {
+            List<FileUpload> targetFiles = matchingFiles(userId, fileName, fileMd5);
+            if (targetFiles.isEmpty()) {
                 LogUtils.logUserOperation(userId, "DOWNLOAD_FILE_BY_NAME", fileName, "FAILED_NOT_FOUND");
                 monitor.end("下载失败：文件不存在或无权限访问");
                 Map<String, Object> response = new HashMap<>();
@@ -576,7 +575,8 @@ public class DocumentController {
                 return ResponseEntity.status(HttpStatus.NOT_FOUND).body(response);
             }
 
-            FileUpload file = targetFile.get();
+            if (targetFiles.size() != 1) return ambiguousFileResponse();
+            FileUpload file = targetFiles.get(0);
 
             // 生成下载链接或返回预签名URL
             String downloadUrl = documentService.generateDownloadUrl(file.getFileMd5());
@@ -619,7 +619,8 @@ public class DocumentController {
      */
     @GetMapping("/preview/pdf")
     public ResponseEntity<?> previewPdfByName(
-            @RequestParam String fileName) {
+            @RequestParam String fileName,
+            @RequestParam(required = false) String fileMd5) {
 
         LogUtils.PerformanceMonitor monitor = LogUtils.startPerformanceMonitor("PREVIEW_PDF_BY_NAME");
         try {
@@ -630,17 +631,9 @@ public class DocumentController {
 
             LogUtils.logBusiness("PREVIEW_PDF_BY_NAME", userId != null ? userId : "anonymous", "接收到PDF预览请求: fileName=%s", fileName);
 
-            Optional<FileUpload> targetFile;
-            if (userId == null) {
-                targetFile = fileUploadRepository.findByFileNameAndIsPublicTrue(fileName);
-            } else {
-                List<FileUpload> accessibleFiles = documentService.getAccessibleFiles(userId, null);
-                targetFile = accessibleFiles.stream()
-                        .filter(file -> file.getFileName().equals(fileName))
-                        .findFirst();
-            }
+            List<FileUpload> targetFiles = matchingFiles(userId, fileName, fileMd5);
 
-            if (targetFile.isEmpty()) {
+            if (targetFiles.isEmpty()) {
                 monitor.end("PDF预览失败：文件不存在或无权限访问");
                 Map<String, Object> response = new HashMap<>();
                 response.put("code", HttpStatus.NOT_FOUND.value());
@@ -648,7 +641,8 @@ public class DocumentController {
                 return ResponseEntity.status(HttpStatus.NOT_FOUND).body(response);
             }
 
-            FileUpload file = targetFile.get();
+            if (targetFiles.size() != 1) return ambiguousFileResponse();
+            FileUpload file = targetFiles.get(0);
             if (!file.getFileName().toLowerCase().endsWith(".pdf")) {
                 monitor.end("PDF预览失败：文件类型不支持");
                 Map<String, Object> response = new HashMap<>();
@@ -685,7 +679,8 @@ public class DocumentController {
      */
     @GetMapping("/preview")
     public ResponseEntity<?> previewFileByName(
-            @RequestParam String fileName) {
+            @RequestParam String fileName,
+            @RequestParam(required = false) String fileMd5) {
 
         LogUtils.PerformanceMonitor monitor = LogUtils.startPerformanceMonitor("PREVIEW_FILE_BY_NAME");
         try {
@@ -698,15 +693,16 @@ public class DocumentController {
 
             // 未登录只允许预览公开文件
             if (userId == null) {
-                Optional<FileUpload> publicFile = fileUploadRepository.findByFileNameAndIsPublicTrue(fileName);
-                if (publicFile.isEmpty()) {
+                List<FileUpload> publicFiles = matchingFiles(null, fileName, fileMd5);
+                if (publicFiles.isEmpty()) {
                     Map<String, Object> response = new HashMap<>();
                     response.put("code", HttpStatus.NOT_FOUND.value());
                     response.put("message", "文件不存在或需要登录访问");
                     return ResponseEntity.status(HttpStatus.NOT_FOUND).body(response);
                 }
 
-                FileUpload file = publicFile.get();
+                if (publicFiles.size() != 1) return ambiguousFileResponse();
+                FileUpload file = publicFiles.get(0);
                 String previewContent = documentService.getFilePreviewContent(file.getFileMd5(), file.getFileName());
 
                 if (previewContent == null) {
@@ -728,14 +724,8 @@ public class DocumentController {
             }
 
             // 登录态组织可见性由服务端按用户实时计算。
-            List<FileUpload> accessibleFiles = documentService.getAccessibleFiles(userId, null);
-
-            // 根据文件名查找匹配的文件
-            Optional<FileUpload> targetFile = accessibleFiles.stream()
-                    .filter(file -> file.getFileName().equals(fileName))
-                    .findFirst();
-
-            if (targetFile.isEmpty()) {
+            List<FileUpload> targetFiles = matchingFiles(userId, fileName, fileMd5);
+            if (targetFiles.isEmpty()) {
                 LogUtils.logUserOperation(userId, "PREVIEW_FILE_BY_NAME", fileName, "FAILED_NOT_FOUND");
                 monitor.end("预览失败：文件不存在或无权限访问");
                 Map<String, Object> response = new HashMap<>();
@@ -744,7 +734,8 @@ public class DocumentController {
                 return ResponseEntity.status(HttpStatus.NOT_FOUND).body(response);
             }
 
-            FileUpload file = targetFile.get();
+            if (targetFiles.size() != 1) return ambiguousFileResponse();
+            FileUpload file = targetFiles.get(0);
 
             // 获取文件预览内容
             String previewContent = documentService.getFilePreviewContent(file.getFileMd5(), file.getFileName());
@@ -780,6 +771,23 @@ public class DocumentController {
             response.put("message", "文件预览失败");
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
         }
+    }
+
+    private List<FileUpload> matchingFiles(String userId, String fileName, String fileMd5) {
+        List<FileUpload> candidates = userId == null
+                ? fileUploadRepository.findAllByFileNameAndIsPublicTrue(fileName)
+                : documentService.getAccessibleFiles(userId, null);
+        return candidates.stream()
+                .filter(file -> fileName.equals(file.getFileName()))
+                .filter(file -> fileMd5 == null || fileMd5.equals(file.getFileMd5()))
+                .filter(file -> !file.isLegacyShared())
+                .toList();
+    }
+
+    private ResponseEntity<?> ambiguousFileResponse() {
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of(
+                "code", HttpStatus.CONFLICT.value(),
+                "message", "同名文件有多份，请指定文档标识"));
     }
 
     /**

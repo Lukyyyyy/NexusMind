@@ -152,7 +152,8 @@ public class ChatScopeService {
     private List<FileUpload> readyAccessibleFiles(String username) {
         Set<String> indexedMd5s = documentVectorRepository.findIndexedFileMd5s();
         return documentService.getAccessibleFiles(username, "").stream()
-                .filter(file -> file.getStatus() == 1 && indexedMd5s.contains(file.getFileMd5()))
+                .filter(file -> !file.isLegacyShared() && file.getStatus() == 1
+                        && indexedMd5s.contains(file.getFileMd5()))
                 .toList();
     }
 

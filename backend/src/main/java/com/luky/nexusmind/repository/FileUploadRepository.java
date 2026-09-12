@@ -23,14 +23,26 @@ public interface FileUploadRepository extends JpaRepository<FileUpload, Long> {
     Optional<FileUpload> lockByMd5AndOwner(@Param("md5") String md5, @Param("owner") String owner);
 
     @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
+    @Query("select f from FileUpload f where f.fileMd5 = :md5 order by f.id")
+    List<FileUpload> lockAllByMd5(@Param("md5") String md5);
+
+    @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
     @Query("select f from FileUpload f where f.id = :id")
     Optional<FileUpload> lockById(@Param("id") Long id);
 
     Optional<FileUpload> findByFileMd5(String fileMd5);
     
     Optional<FileUpload> findByFileMd5AndUserId(String fileMd5, String userId);
+
+    @Query("select f from FileUpload f where f.userId = :owner and f.orgTag = :orgTag "
+            + "and (f.contentSha256 = :sha256 or (f.contentSha256 is null and f.contentMd5 = :checksum))")
+    Optional<FileUpload> findDuplicate(@Param("owner") String owner,
+                                       @Param("orgTag") String orgTag,
+                                       @Param("sha256") String sha256,
+                                       @Param("checksum") String checksum);
     
     Optional<FileUpload> findByFileNameAndIsPublicTrue(String fileName);
+    List<FileUpload> findAllByFileNameAndIsPublicTrue(String fileName);
     
     long countByFileMd5(String fileMd5);
     long countByOrgTag(String orgTag);

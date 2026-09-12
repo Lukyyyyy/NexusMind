@@ -15,9 +15,11 @@ class DocumentAssetPermissionTest {
         var files = mock(com.luky.nexusmind.repository.FileUploadRepository.class);
         FileUpload file = new FileUpload();
         file.setFileMd5("file");
-        when(files.lockByMd5AndOwner("file", "owner")).thenReturn(java.util.Optional.of(file));
+        file.setUserId("owner");
+        when(files.lockAllByMd5("file")).thenReturn(List.of(file));
         ReflectionTestUtils.setField(documents, "fileUploadRepository", files);
         ReflectionTestUtils.setField(documents, "parsedAssetService", assets);
+        ReflectionTestUtils.setField(documents, "knowledgeGraphService", mock(KnowledgeGraphService.class));
         doThrow(new java.io.IOException("storage unavailable")).when(assets).delete("file");
         assertThrows(RuntimeException.class, () -> documents.deleteDocument("file", "owner"));
         verify(files, never()).delete(any(FileUpload.class));

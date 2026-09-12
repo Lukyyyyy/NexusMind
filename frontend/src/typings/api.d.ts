@@ -410,6 +410,9 @@ declare namespace Api {
       file: File;
       chunk: Blob | null;
       fileMd5: string;
+      contentMd5?: string;
+      contentSha256?: string;
+      legacyShared?: boolean;
       chunkIndex: number;
       totalSize: number;
       fileName: string;

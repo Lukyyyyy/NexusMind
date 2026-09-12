@@ -685,6 +685,28 @@ public class UserService {
         return primaryOrg;
     }
 
+    /** 组织归属由服务端确认；管理员可使用非私人组织，私人空间只能由成员本人使用。 */
+    public String validateUploadOrgTag(String userId, String rawOrgTag) {
+        User user;
+        try {
+            user = userRepository.findById(Long.parseLong(userId))
+                    .orElseThrow(() -> new CustomException("用户不存在", HttpStatus.NOT_FOUND));
+        } catch (NumberFormatException e) {
+            user = userRepository.findByUsername(userId)
+                    .orElseThrow(() -> new CustomException("用户不存在", HttpStatus.NOT_FOUND));
+        }
+        String orgTag = normalizeNullableOrgTag(rawOrgTag);
+        OrganizationTag organization = organizationTagRepository.findByTagId(orgTag)
+                .orElseThrow(() -> new CustomException("组织标签不存在", HttpStatus.BAD_REQUEST));
+        boolean member = organizationMembershipService.directMember(user, orgTag);
+        boolean administratorOrg = user.getRole().isAdministrator()
+                && !DocumentPermissionPolicy.isPrivateOrgTag(orgTag);
+        if (organization.getArchivedAt() != null || (!member && !administratorOrg)) {
+            throw new CustomException("无权将文件上传到该组织", HttpStatus.FORBIDDEN);
+        }
+        return orgTag;
+    }
+
     /**
      * 获取组织标签树结构
      * 

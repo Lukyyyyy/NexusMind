@@ -209,19 +209,28 @@ public class KnowledgeGraphService {
     }
 
     private FileUpload requireManageableFile(String fileMd5, String userId, String role) {
+        if (fileUploadRepository.countByFileMd5(fileMd5) > 1) {
+            throw new CustomException("旧文档索引存在共享风险，请删除后重新上传", HttpStatus.CONFLICT);
+        }
         boolean write =
                 TransactionSynchronizationManager.isActualTransactionActive()
                         && !TransactionSynchronizationManager.isCurrentTransactionReadOnly();
+        FileUpload file;
         if ("SUPER_ADMIN".equals(role)) {
-            return (write
+            file = (write
                             ? fileUploadRepository.lockByMd5(fileMd5)
                             : fileUploadRepository.findByFileMd5(fileMd5))
                     .orElseThrow(() -> new CustomException("文档不存在", HttpStatus.NOT_FOUND));
+        } else {
+            file = (write
+                            ? fileUploadRepository.lockByMd5AndOwner(fileMd5, userId)
+                            : fileUploadRepository.findByFileMd5AndUserId(fileMd5, userId))
+                    .orElseThrow(() -> new CustomException("只有上传者或超级管理员可以管理图谱", HttpStatus.FORBIDDEN));
         }
-        return (write
-                        ? fileUploadRepository.lockByMd5AndOwner(fileMd5, userId)
-                        : fileUploadRepository.findByFileMd5AndUserId(fileMd5, userId))
-                .orElseThrow(() -> new CustomException("只有上传者或超级管理员可以管理图谱", HttpStatus.FORBIDDEN));
+        if (file.isLegacyShared()) {
+            throw new CustomException("旧文档索引存在共享风险，请删除后重新上传", HttpStatus.CONFLICT);
+        }
+        return file;
     }
 
     private DocumentGraphResponse response(FileUpload file) {
