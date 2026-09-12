@@ -9,11 +9,14 @@ import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
 
 import java.lang.reflect.Proxy;
+import java.net.InetAddress;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 class ModelConfigServiceTest {
     @Test
     void acceptsBaseUrlsAndFullEndpointUrls() {
@@ -54,6 +57,28 @@ class ModelConfigServiceTest {
                 () -> assertBadRequest(service, request(11, 10)),
                 () -> assertBadRequest(service, request(10, 0)),
                 () -> assertBadRequest(service, request(10, 31)));
+    }
+
+    @Test
+    void userModelCannotTargetInternalNetworkOrNonHttpSchemes() throws Exception {
+        User user = new User();
+        user.setRole(User.Role.USER);
+        UserRepository users = (UserRepository) Proxy.newProxyInstance(
+                UserRepository.class.getClassLoader(), new Class<?>[]{UserRepository.class},
+                (proxy, method, args) -> method.getName().equals("findByUsername") ? Optional.of(user) : null);
+        ModelConfigService service = new ModelConfigService(null, null, null, users, null, null,
+                "", "", "", "", "", "", 10, false, 10, 2048, 30);
+        for (String url : new String[]{"http://127.0.0.1:8080", "http://169.254.169.254/latest",
+                "http://[::1]/", "http://[fd00::1]/", "file:///etc/passwd", "http://user@api.example.com"}) {
+            var request = new ModelConfigService.ModelConfigRequest(AiModelOwnerType.USER, AiModelType.EMBEDDING,
+                    "embedding", null, url, "key", "model", true, false,
+                    null, null, null, null, 2048, 1, 1, null, null, null);
+            assertBadRequest(service, request);
+        }
+        assertFalse(ModelConfigService.isPublicAddress(InetAddress.getByName("10.0.0.1")));
+        assertFalse(ModelConfigService.isPublicAddress(InetAddress.getByName("100.64.0.1")));
+        assertFalse(ModelConfigService.isPublicAddress(InetAddress.getByName("fd00::1")));
+        assertTrue(ModelConfigService.isPublicAddress(InetAddress.getByName("8.8.8.8")));
     }
 
     private static void assertBadRequest(ModelConfigService service, ModelConfigService.ModelConfigRequest request) {

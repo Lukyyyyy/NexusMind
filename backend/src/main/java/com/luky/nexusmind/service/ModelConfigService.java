@@ -15,7 +15,13 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.http.client.reactive.ReactorClientHttpConnector;
+import org.springframework.web.reactive.function.client.WebClient;
+import reactor.netty.http.client.HttpClient;
 
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
+import java.net.URI;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -367,6 +373,8 @@ public class ModelConfigService {
         if (!hasText(request.name()) || !hasText(request.baseUrl()) || !hasText(request.modelName())) {
             throw new CustomException("模型名称、基础 URL 和模型 ID 不能为空", HttpStatus.BAD_REQUEST);
         }
+        validateModelUrl(request.baseUrl(), request.ownerType() == AiModelOwnerType.SYSTEM
+                && user.getRole() == User.Role.SUPER_ADMIN ? AiModelOwnerType.SYSTEM : AiModelOwnerType.USER);
         if (request.modelType() == AiModelType.EMBEDDING) {
             int dimension = request.dimension() != null ? request.dimension() : REQUIRED_EMBEDDING_DIMENSION;
             if (dimension != REQUIRED_EMBEDDING_DIMENSION) {
@@ -609,6 +617,58 @@ public class ModelConfigService {
         return normalized != null && normalized.endsWith(endpoint)
                 ? trimTrailingSlash(normalized.substring(0, normalized.length() - endpoint.length()))
                 : normalized;
+    }
+
+    /** 用户自建模型只允许公网 HTTP(S)；系统模型由管理员配置，可使用内网地址。 */
+    public static WebClient.Builder modelWebClient(ResolvedModelConfig config) {
+        validateModelUrl(config.baseUrl(), config.ownerType());
+        WebClient.Builder builder = WebClient.builder().baseUrl(config.baseUrl());
+        if (config.ownerType() == AiModelOwnerType.USER) {
+            // 在实际连接上逐请求检查目标 IP，避免保存后 DNS 变化或 DNS rebinding 绕过校验。
+            builder.clientConnector(new ReactorClientHttpConnector(HttpClient.create()
+                    .doOnRequest((request, connection) -> {
+                        if (!(connection.channel().remoteAddress() instanceof InetSocketAddress remote)
+                                || remote.getAddress() == null || !isPublicAddress(remote.getAddress())) {
+                            connection.dispose();
+                            throw new IllegalArgumentException("用户模型不得访问内网地址");
+                        }
+                    })));
+        }
+        return builder;
+    }
+
+    private static void validateModelUrl(String value, AiModelOwnerType ownerType) {
+        try {
+            URI uri = URI.create(value.trim());
+            String host = uri.getHost();
+            if (!("http".equalsIgnoreCase(uri.getScheme()) || "https".equalsIgnoreCase(uri.getScheme()))
+                    || host == null || uri.getRawUserInfo() != null || uri.getRawFragment() != null
+                    || uri.getRawQuery() != null || uri.getPort() > 65535) {
+                throw new IllegalArgumentException();
+            }
+            if (ownerType == AiModelOwnerType.USER && ("localhost".equalsIgnoreCase(host)
+                    || host.matches("[0-9.]+") || host.contains(":"))) {
+                for (InetAddress address : InetAddress.getAllByName(host)) {
+                    if (!isPublicAddress(address)) throw new IllegalArgumentException();
+                }
+            }
+        } catch (Exception e) {
+            throw new CustomException("模型基础 URL 必须是有效的公网 HTTP(S) 地址", HttpStatus.BAD_REQUEST);
+        }
+    }
+
+    static boolean isPublicAddress(InetAddress address) {
+        byte[] bytes = address.getAddress();
+        if (address.isAnyLocalAddress() || address.isLoopbackAddress() || address.isLinkLocalAddress()
+                || address.isSiteLocalAddress() || address.isMulticastAddress()) return false;
+        if (bytes.length == 16) return (bytes[0] & 0xfe) != 0xfc; // IPv6 unique-local fc00::/7
+        int first = bytes[0] & 0xff;
+        int second = bytes[1] & 0xff;
+        return first != 0 && first != 10 && first != 127 && first < 224
+                && !(first == 100 && second >= 64 && second <= 127)
+                && !(first == 169 && second == 254)
+                && !(first == 172 && second >= 16 && second <= 31)
+                && !(first == 192 && second == 168);
     }
 
     private static String trimTrailingSlash(String value) {

@@ -220,8 +220,7 @@ public class EmbeddingClient {
     }
 
     private WebClient buildWebClient(ModelConfigService.ResolvedModelConfig modelConfig) {
-        WebClient.Builder builder = WebClient.builder()
-                .baseUrl(modelConfig.baseUrl())
+        WebClient.Builder builder = ModelConfigService.modelWebClient(modelConfig)
                 .codecs(configurer -> configurer.defaultCodecs()
                         .maxInMemorySize(maxResponseSizeBytes))
                 .defaultHeader(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE);

@@ -193,7 +193,7 @@ public class KnowledgeGraphExtractionClient {
 
     private String complete(ModelConfigService.ResolvedModelConfig config, String userKey, String systemPrompt,
                             String userPrompt, int maxTokens, String scenario) {
-        WebClient.Builder builder = WebClient.builder().baseUrl(config.baseUrl());
+        WebClient.Builder builder = ModelConfigService.modelWebClient(config);
         if (config.apiKey() != null && !config.apiKey().isBlank()) {
             builder.defaultHeader(HttpHeaders.AUTHORIZATION, "Bearer " + config.apiKey());
         }

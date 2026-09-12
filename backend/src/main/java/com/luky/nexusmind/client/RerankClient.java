@@ -143,8 +143,7 @@ public class RerankClient {
     }
 
     private WebClient buildWebClient(ModelConfigService.ResolvedModelConfig config) {
-        WebClient.Builder builder = WebClient.builder()
-                .baseUrl(config.baseUrl())
+        WebClient.Builder builder = ModelConfigService.modelWebClient(config)
                 .defaultHeader(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE);
         if (config.apiKey() != null && !config.apiKey().trim().isEmpty()) {
             builder.defaultHeader(HttpHeaders.AUTHORIZATION, "Bearer " + config.apiKey());

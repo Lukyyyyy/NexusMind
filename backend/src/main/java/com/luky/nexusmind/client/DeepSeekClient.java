@@ -483,7 +483,7 @@ public class DeepSeekClient {
     }
 
     private WebClient buildWebClient(ModelConfigService.ResolvedModelConfig modelConfig) {
-        WebClient.Builder builder = WebClient.builder().baseUrl(modelConfig.baseUrl());
+        WebClient.Builder builder = ModelConfigService.modelWebClient(modelConfig);
         if (modelConfig.apiKey() != null && !modelConfig.apiKey().trim().isEmpty()) {
             builder.defaultHeader(HttpHeaders.AUTHORIZATION, "Bearer " + modelConfig.apiKey());
         }
