@@ -62,6 +62,10 @@ public class SecurityConfig {
                             .requestMatchers("/actuator/**").hasRole("SUPER_ADMIN")
                             // 短期下载票据在控制器中验证，不使用登录 JWT 作为 URL 参数。
                             .requestMatchers("/api/v1/documents/download/content").permitAll()
+                            // IM 渠道回调不使用登录 JWT，安全性由各渠道适配器的签名验证保证。
+                            .requestMatchers("/api/v1/im/callback/**").permitAll()
+                            // IM 渠道接入：每用户独立机器人，所有登录用户可扫码连接自己的机器人。
+                            .requestMatchers("/api/v1/im/clawbot/**").hasAnyRole("USER", "ADMIN", "SUPER_ADMIN")
                             // PDF预览接口在控制器内部按登录态校验文件访问权限，不接受 URL token。
                             .requestMatchers("/api/v1/documents/preview/pdf").permitAll()
                             // SSE 事件流使用一次性短期票据，避免把登录 JWT 放入 URL。

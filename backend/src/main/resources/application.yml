@@ -76,17 +76,20 @@ spring:
         client.dns.lookup: use_all_dns_ips
     consumer:
       group-id: file-processing-group # 消费者组 ID
+      im-group-id: nexusmind-im-group # IM 入站消息独立消费组，避免长问答阻塞文档处理队列
       auto-offset-reset: earliest
       key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
       value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
       properties:
-        spring.json.trusted.packages: "com.luky.nexusmind.model" # 限制Kafka反序列化白名单，防内网RCE
+        spring.json.trusted.packages: "com.luky.nexusmind.model,com.luky.nexusmind.im.model" # 限制Kafka反序列化白名单，防内网RCE
         client.dns.lookup: use_all_dns_ips
         max.poll.interval.ms: 1800000
         max.poll.records: 1
     topic:
       file-processing: file-processing-topic1 # 新增的 Topic 配置
       dlt: file-processing-dlt # 死信队列主题
+      im-inbound: im-inbound-topic # IM 入站消息队列
+      im-dlt: im-inbound-dlt # IM 死信队列
   webflux:
     client:
       max-in-memory-size: 16MB  # 增加响应大小限制
@@ -118,6 +121,19 @@ admin:
 app:
   public-url: ${APP_PUBLIC_URL:http://localhost:9527}
   test-endpoints-enabled: ${APP_TEST_ENDPOINTS_ENABLED:false}
+
+# IM 渠道接入（Phase 1：微信 ClawBot/iLink 直连；企业微信/飞书适配器后续补充）
+im:
+  crypto-secret: ${IM_CRYPTO_SECRET:} # 留空则回退使用 jwt.secret-key 派生密钥
+  pull-polling:
+    idle-delay-ms: ${IM_PULL_IDLE_DELAY_MS:500} # iLink 长轮询空转后的下一轮间隔
+  clawbot:
+    base-url: ${IM_CLAWBOT_BASE_URL:https://ilinkai.weixin.qq.com} # iLink Bot API 地址
+    bot-token: ${IM_CLAWBOT_BOT_TOKEN:} # 已扫码获得的 bot_token；留空则用管理端点扫码接入
+    bot-name: ${IM_CLAWBOT_BOT_NAME:}
+    group-require-mention: ${IM_CLAWBOT_GROUP_REQUIRE_MENTION:false}
+    max-outbound-chars: ${IM_CLAWBOT_MAX_OUTBOUND_CHARS:1600}
+    placeholder-enabled: ${IM_CLAWBOT_PLACEHOLDER:false}
 
 security:
   login:
