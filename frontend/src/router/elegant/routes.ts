@@ -74,6 +74,17 @@ export const generatedRoutes: GeneratedRoute[] = [
     }
   },
   {
+    name: 'im-channel',
+    path: '/im-channel',
+    component: 'layout.base$view.im-channel',
+    meta: {
+      title: 'im-channel',
+      i18nKey: 'route.im-channel',
+      icon: 'ant-design:comment-outlined',
+      order: 7
+    }
+  },
+  {
     name: 'knowledge-base',
     path: '/knowledge-base',
     component: 'layout.base$view.knowledge-base',

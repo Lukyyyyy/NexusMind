@@ -23,6 +23,7 @@ declare module "@elegant-router/types" {
     "chat": "/chat";
     "chat-history": "/chat-history";
     "iframe-page": "/iframe-page/:url";
+    "im-channel": "/im-channel";
     "knowledge-base": "/knowledge-base";
     "login": "/login/:module(pwd-login|code-login|register|reset-pwd|bind-wechat)?";
     "model-config": "/model-config";
@@ -70,6 +71,7 @@ declare module "@elegant-router/types" {
     | "chat"
     | "chat-history"
     | "iframe-page"
+    | "im-channel"
     | "knowledge-base"
     | "login"
     | "model-config"
@@ -104,6 +106,7 @@ declare module "@elegant-router/types" {
     | "verify-email"
     | "chat-history"
     | "chat"
+    | "im-channel"
     | "knowledge-base"
     | "model-config"
     | "observability"

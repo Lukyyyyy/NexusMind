@@ -168,6 +168,7 @@ const local: App.I18n.Schema = {
     'organization-graph': '组织知识图谱',
     'org-tag': '组织管理',
     organization: '组织关系',
+    'im-channel': 'IM 渠道接入',
     'model-config': '模型配置',
     observability: '可观测数据',
     user: '用户管理',

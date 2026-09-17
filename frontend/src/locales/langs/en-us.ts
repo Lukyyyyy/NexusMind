@@ -168,6 +168,7 @@ const local: App.I18n.Schema = {
     'organization-graph': 'Organization Graph',
     'org-tag': 'Organization Management',
     organization: 'Organization Relationships',
+    'im-channel': 'IM Channels',
     'model-config': 'Model Config',
     observability: 'Observability',
     user: 'User Management',
