@@ -77,7 +77,7 @@ services:
     entrypoint: ["/bin/bash", "-ec"]
     command:
       - |
-        for topic in file-processing-topic1 file-processing-dlt; do
+        for topic in file-processing-topic1 document-deletion-topic file-processing-dlt; do
           /opt/bitnami/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --replication-factor 1 --partitions 1 --topic "$$topic"
         done
     mem_limit: 128m

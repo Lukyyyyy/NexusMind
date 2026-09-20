@@ -34,6 +34,9 @@ public class KafkaConfig {
     @Value("${spring.kafka.topic.dlt}")
     private String fileProcessingDltTopic;
 
+    @Value("${spring.kafka.topic.document-deletion}")
+    private String documentDeletionTopic;
+
     @Value("${spring.kafka.consumer.group-id}")
     private String fileProcessingGroupId;
 
@@ -59,6 +62,14 @@ public class KafkaConfig {
 
     public String getFileProcessingGroupId() {
         return fileProcessingGroupId;
+    }
+
+    public String getDocumentDeletionTopic() {
+        return documentDeletionTopic;
+    }
+
+    public String getDocumentDeletionGroupId() {
+        return fileProcessingGroupId + "-document-deletion";
     }
 
     @Bean

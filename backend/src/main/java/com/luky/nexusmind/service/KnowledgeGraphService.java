@@ -230,6 +230,9 @@ public class KnowledgeGraphService {
         if (file.isLegacyShared()) {
             throw new CustomException("旧文档索引存在共享风险，请删除后重新上传", HttpStatus.CONFLICT);
         }
+        if (file.isDeletionPending()) {
+            throw new CustomException("文档正在删除", HttpStatus.CONFLICT);
+        }
         return file;
     }
 

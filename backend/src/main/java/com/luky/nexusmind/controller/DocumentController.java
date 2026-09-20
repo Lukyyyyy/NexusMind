@@ -94,9 +94,9 @@ public class DocumentController {
             if (fileOpt.isEmpty()) {
                 // 已被此前请求删除时按成功处理，仍不允许操作其他用户现存的文档。
                 if (fileUploadRepository.countByFileMd5(fileMd5) == 0) {
-                    documentService.deleteDocument(fileMd5, userId);
-                    monitor.end("文档已删除");
-                    return ResponseEntity.ok(Map.of("code", 200, "message", "文档已删除"));
+                    documentService.enqueueDocumentDeletion(fileMd5, userId);
+                    monitor.end("删除任务已提交");
+                    return ResponseEntity.accepted().body(Map.of("code", 200, "message", "删除任务已提交"));
                 }
                 LogUtils.logUserOperation(userId, "DELETE_DOCUMENT", fileMd5, "FAILED_NOT_FOUND");
                 monitor.end("删除失败：文档不存在");
@@ -120,14 +120,14 @@ public class DocumentController {
             }
             
             // 使用实际所有者查询文档及清理处理状态，操作日志仍记录当前用户。
-            documentService.deleteDocument(fileMd5, file.getUserId());
+            documentService.enqueueDocumentDeletion(fileMd5, file.getUserId());
             
-            LogUtils.logFileOperation(userId, "DELETE", file.getFileName(), fileMd5, "SUCCESS");
-            monitor.end("文档删除成功");
+            LogUtils.logFileOperation(userId, "DELETE", file.getFileName(), fileMd5, "QUEUED");
+            monitor.end("删除任务已提交");
             Map<String, Object> response = new HashMap<>();
             response.put("code", 200);
-            response.put("message", "文档删除成功");
-            return ResponseEntity.ok(response);
+            response.put("message", "删除任务已提交");
+            return ResponseEntity.accepted().body(response);
         } catch (Exception e) {
             LogUtils.logBusinessError("DELETE_DOCUMENT", userId, "删除文档失败: fileMd5=%s", e, fileMd5);
             monitor.end("删除失败: " + e.getMessage());
@@ -501,7 +501,7 @@ public class DocumentController {
             return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
         }
         Optional<FileUpload> file = fileUploadRepository.findByFileMd5(fileMd5.get());
-        if (file.isEmpty()) {
+        if (file.isEmpty() || file.get().isDeletionPending()) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
         }
         try {

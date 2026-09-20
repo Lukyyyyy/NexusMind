@@ -24,6 +24,7 @@ spring:
     bootstrap-servers: 127.0.0.1:${KAFKA_PORT:9092}
     topic:
       file-processing: ${KAFKA_FILE_PROCESSING_TOPIC:file-processing-topic1}
+      document-deletion: ${KAFKA_DOCUMENT_DELETION_TOPIC:document-deletion-topic}
       dlt: ${KAFKA_FILE_PROCESSING_DLT_TOPIC:file-processing-dlt}
 
 minio:

@@ -43,7 +43,8 @@ class DocumentControllerTest {
 
         ResponseEntity<?> response = controller.deleteDocument(document.getFileMd5(), "super-admin", "SUPER_ADMIN");
 
-        assertEquals(200, response.getStatusCode().value());
+        assertEquals(202, response.getStatusCode().value());
+        assertEquals(200, ((Map<?, ?>) response.getBody()).get("code"));
         assertEquals(List.of(document.getFileMd5(), document.getUserId()), service.deleted);
     }
 
@@ -69,7 +70,7 @@ class DocumentControllerTest {
 
         ResponseEntity<?> response = controller.deleteDocument(document.getFileMd5(), document.getUserId(), role);
 
-        assertEquals(200, response.getStatusCode().value());
+        assertEquals(202, response.getStatusCode().value());
         assertEquals(List.of(document.getFileMd5(), document.getUserId()), service.deleted);
     }
 
@@ -80,7 +81,7 @@ class DocumentControllerTest {
 
         ResponseEntity<?> response = controller.deleteDocument("missing", "super-admin", "SUPER_ADMIN");
 
-        assertEquals(200, response.getStatusCode().value());
+        assertEquals(202, response.getStatusCode().value());
         assertEquals(List.of("missing", "super-admin"), service.deleted);
     }
 
@@ -89,7 +90,7 @@ class DocumentControllerTest {
         FileUpload document = file("document.txt", "default", false);
         RecordingDeleteService service = new RecordingDeleteService() {
             @Override
-            public void deleteDocument(String md5, String owner) {
+            public void enqueueDocumentDeletion(String md5, String owner) {
                 throw new RuntimeException("Row was updated: FileUpload#9");
             }
         };
@@ -118,7 +119,7 @@ class DocumentControllerTest {
         private List<String> deleted = List.of();
 
         @Override
-        public void deleteDocument(String fileMd5, String userId) {
+        public void enqueueDocumentDeletion(String fileMd5, String userId) {
             deleted = List.of(fileMd5, userId);
         }
     }

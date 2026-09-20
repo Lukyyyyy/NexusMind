@@ -330,6 +330,7 @@ public class OrgTagAuthorizationFilter extends OncePerRequestFilter {
         Optional<FileUpload> fileUpload = fileUploadRepository.findByFileMd5(resourceId);
         if (fileUpload.isPresent()) {
             FileUpload file = fileUpload.get();
+            if (file.isDeletionPending()) return null;
             ResourceInfo info = new ResourceInfo(
                 file.getUserId(),
                 file.getOrgTag(),

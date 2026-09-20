@@ -380,6 +380,9 @@ public class UploadController {
         }
 
         FileUpload fileUpload = fileUploadOptional.get();
+        if (fileUpload.isDeletionPending()) {
+            return errorResponse(HttpStatus.CONFLICT, "文件正在删除");
+        }
         if (fileUpload.isLegacyShared()) {
             return errorResponse(HttpStatus.CONFLICT, "旧文档索引存在共享风险，请删除后重新上传");
         }

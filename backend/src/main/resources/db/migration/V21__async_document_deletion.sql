@@ -1,0 +1,1 @@
+ALTER TABLE file_upload ADD COLUMN deletion_pending BOOLEAN NOT NULL DEFAULT FALSE;

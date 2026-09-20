@@ -87,6 +87,7 @@ spring:
         max.poll.records: 1
     topic:
       file-processing: file-processing-topic1 # 新增的 Topic 配置
+      document-deletion: document-deletion-topic
       dlt: file-processing-dlt # 死信队列主题
       im-inbound: im-inbound-topic # IM 入站消息队列
       im-dlt: im-inbound-dlt # IM 死信队列

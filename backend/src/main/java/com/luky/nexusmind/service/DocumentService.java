@@ -1,5 +1,7 @@
 package com.luky.nexusmind.service;
 
+import com.luky.nexusmind.config.KafkaConfig;
+import com.luky.nexusmind.model.DocumentDeletionTask;
 import com.luky.nexusmind.model.FileUpload;
 import com.luky.nexusmind.model.DocumentVector;
 import com.luky.nexusmind.model.FileProcessingStatus;
@@ -23,7 +25,10 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
+import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
@@ -88,8 +93,48 @@ public class DocumentService {
     @Autowired
     private UploadService uploadService;
 
+    @Autowired
+    private KafkaTemplate<String, Object> kafkaTemplate;
+
+    @Autowired
+    private KafkaConfig kafkaConfig;
+
     @Value("${file.parsing.chunk-size}")
     private int configuredChunkSize;
+
+    /**
+     * 在数据库中立即隐藏文档，Kafka 只负责耗时的外部资源清理。
+     */
+    @Transactional
+    public void enqueueDocumentDeletion(String fileMd5, String userId) {
+        taskControl.beginDelete(fileMd5, userId);
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCompletion(int status) {
+                if (status != STATUS_COMMITTED) taskControl.abortDelete(fileMd5, userId);
+            }
+        });
+
+        List<FileUpload> references = fileUploadRepository.lockAllByMd5(fileMd5);
+        FileUpload file = references.stream()
+                .filter(candidate -> userId.equals(candidate.getUserId()))
+                .findFirst()
+                .orElse(null);
+        Long fileId = null;
+        if (file != null) {
+            fileId = file.getId();
+            file.setDeletionPending(true);
+            file.setGraphEnabled(false);
+            file.setGraphRunToken(java.util.UUID.randomUUID().toString());
+            fileUploadRepository.saveAndFlush(file);
+        }
+
+        DocumentDeletionTask task = new DocumentDeletionTask(fileId, fileMd5, userId);
+        kafkaTemplate.executeInTransaction(operations -> {
+            operations.send(kafkaConfig.getDocumentDeletionTopic(), fileMd5, task);
+            return null;
+        });
+    }
 
     /**
      * 删除文档及其相关数据
@@ -104,23 +149,44 @@ public class DocumentService {
      */
     @Transactional
     public void deleteDocument(String fileMd5, String userId) {
+        deleteDocument(fileMd5, userId, null, false);
+    }
+
+    /** Kafka 消费端入口；重复消费时严格按数据库主键幂等。 */
+    @Transactional
+    public void deleteDocument(DocumentDeletionTask task) {
+        deleteDocument(task.fileMd5(), task.userId(), task.fileId(), true);
+    }
+
+    private void deleteDocument(String fileMd5, String userId, Long fileId, boolean requirePending) {
         logger.info("开始删除文档: {}", fileMd5);
-        if (taskControl != null) {
+        if (!requirePending && taskControl != null) {
             taskControl.beginDelete(fileMd5, userId);
+        }
+        if (taskControl != null) {
             taskControl.lockDeletion(fileMd5, userId);
         }
         
         try {
             // 同 MD5 的所有引用按固定顺序上锁，跨用户并发删除不会误删共享资源。
             List<FileUpload> references = fileUploadRepository.lockAllByMd5(fileMd5);
-            Optional<FileUpload> existing = references.stream()
-                    .filter(file -> userId.equals(file.getUserId())).findFirst();
+            Optional<FileUpload> existing = fileId == null
+                    ? (requirePending ? Optional.empty() : references.stream()
+                            .filter(file -> userId.equals(file.getUserId())).findFirst())
+                    : references.stream().filter(file -> fileId.equals(file.getId())
+                            && userId.equals(file.getUserId())).findFirst();
             if (existing.isEmpty()) {
-                if (references.isEmpty() && uploadService != null) uploadService.deleteUploadChunks(fileMd5, userId);
+                if ((references.isEmpty() || fileId == null) && uploadService != null) {
+                    uploadService.deleteUploadChunks(fileMd5, userId);
+                }
                 if (taskControl != null) taskControl.finishDelete(fileMd5, userId);
                 return;
             }
             FileUpload fileUpload = existing.get();
+            if (requirePending && !fileUpload.isDeletionPending()) {
+                logger.info("忽略未提交的删除消息: fileId={}", fileId);
+                return;
+            }
 
             // 清理可重复执行。任一步失败都保留数据库记录，供用户重新执行删除。
             knowledgeGraphService.removeDocument(fileUpload);
@@ -213,6 +279,7 @@ public class DocumentService {
             }
             
             List<FileUpload> accessibleFiles = files.stream()
+                    .filter(file -> !file.isDeletionPending())
                     .filter(file -> !DocumentPermissionPolicy.isPrivateOrgTag(file.getOrgTag())
                             || "SUPER_ADMIN".equals(role)
                             || ownerIds.contains(file.getUserId()))
@@ -426,6 +493,7 @@ public class DocumentService {
             // 从数据库获取文件信息
             FileUpload fileUpload = fileUploadRepository.findByFileMd5(fileMd5)
                     .orElseThrow(() -> new RuntimeException("文件不存在: " + fileMd5));
+            if (fileUpload.isDeletionPending()) throw new IllegalStateException("文件正在删除");
             if (fileUpload.isLegacyShared()) throw new IllegalStateException("旧文档索引需要重新上传");
             
             String downloadUrl = downloadTickets.createUrl(fileMd5);
@@ -464,6 +532,7 @@ public class DocumentService {
         if (fileMd5 == null) throw new IllegalArgumentException("缺少文档标识");
         FileUpload file = fileUploadRepository.findByFileMd5(fileMd5)
                 .orElseThrow(() -> new IllegalArgumentException("文件不存在"));
+        if (file.isDeletionPending()) throw new IllegalStateException("文件正在删除");
         if (file.isLegacyShared()) throw new IllegalStateException("旧文档索引需要重新上传");
         Exception primary = null;
         List<String> objects = UploadService.isLegacyContentKey(file)
@@ -526,6 +595,7 @@ public class DocumentService {
                 // 对于非文本文件，返回文件信息
                 FileUpload fileUpload = fileUploadRepository.findByFileMd5(fileMd5)
                         .orElseThrow(() -> new RuntimeException("文件不存在: " + fileMd5));
+                if (fileUpload.isDeletionPending()) throw new IllegalStateException("文件正在删除");
                 
                 String fileInfo = String.format(
                     "文件名: %s\n" +

@@ -72,6 +72,12 @@ public class FileTaskControl {
         jdbc.update("update file_task_generation set deleting=false where file_md5=? and user_id=?", md5, owner);
     }
 
+    /** The delete request rolled back before Kafka could own the cleanup. */
+    public void abortDelete(String md5, String owner) {
+        freshTx.executeWithoutResult(ignored ->
+                jdbc.update("update file_task_generation set deleting=false where file_md5=? and user_id=?", md5, owner));
+    }
+
     private void ensure(String md5, String owner) {
         jdbc.update("insert ignore into file_task_generation(file_md5,user_id,generation,deleting) values (?,?,0,false)", md5, owner);
     }

@@ -97,6 +97,12 @@ services:
           --replication-factor 1 \
           --partitions 1 \
           --topic vectorization 2>/dev/null || true
+
+        kafka-topics.sh --create \
+          --bootstrap-server localhost:9092 \
+          --replication-factor 1 \
+          --partitions 1 \
+          --topic document-deletion-topic 2>/dev/null || true
         # 保持容器运行
         tail -f /dev/null
     healthcheck:

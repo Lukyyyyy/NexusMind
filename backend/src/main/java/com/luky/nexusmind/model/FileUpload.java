@@ -35,6 +35,10 @@ public class FileUpload {
     @Column(name = "legacy_shared", nullable = false)
     private boolean legacyShared;
 
+    /** Hidden from users while Kafka finishes deleting external resources. */
+    @Column(name = "deletion_pending", nullable = false)
+    private boolean deletionPending;
+
     /**
      * 文件的原始名称
      * 用于记录上传时文件的名称

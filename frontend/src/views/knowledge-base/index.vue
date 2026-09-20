@@ -203,25 +203,10 @@ function confirmDelete(row: Api.KnowledgeBase.UploadTask) {
     positiveText: '删除',
     negativeText: '取消',
     positiveButtonProps: { type: 'error' },
-    onPositiveClick: async () => {
+    onPositiveClick: () => {
       if (deletingFiles.value.has(fileMd5)) return false;
-      if (!dialog) return false;
-      dialog.loading = true;
-      dialog.positiveText = '正在删除';
-      dialog.closable = false;
-      dialog.maskClosable = false;
-      dialog.closeOnEsc = false;
-      dialog.negativeButtonProps = { disabled: true };
-      try {
-        return await handleDelete(fileMd5);
-      } finally {
-        dialog.loading = false;
-        dialog.positiveText = '删除';
-        dialog.closable = true;
-        dialog.maskClosable = true;
-        dialog.closeOnEsc = true;
-        dialog.negativeButtonProps = { disabled: false };
-      }
+      void handleDelete(fileMd5);
+      return true;
     },
     onAfterLeave: () => deleteDialogs.delete(fileMd5)
   });
@@ -615,8 +600,12 @@ function renderOwnership(row: Api.KnowledgeBase.UploadTask) {
 async function handleDelete(fileMd5: string): Promise<boolean> {
   if (deletingFiles.value.has(fileMd5)) return false;
   deletingFiles.value.add(fileMd5);
+  const task = tasks.value.find(item => item.fileMd5 === fileMd5);
+  if (task?.id) deletedDocumentIds.add(task.id);
+  tasks.value = tasks.value.filter(item => item.fileMd5 !== fileMd5);
+  data.value = data.value.filter(item => item.fileMd5 !== fileMd5);
+
   try {
-    const task = tasks.value.find(item => item.fileMd5 === fileMd5);
     store.cancelUpload(fileMd5);
 
     // 即使没有上传成功的分片，服务端也可能已经创建记录，统一执行幂等删除。
@@ -625,13 +614,13 @@ async function handleDelete(fileMd5: string): Promise<boolean> {
       method: 'DELETE',
       timeout: 120_000
     });
-    if (error) return false;
+    if (error) {
+      if (task?.id) deletedDocumentIds.delete(task.id);
+      await getList();
+      return false;
+    }
 
-    // 请求期间列表可能刷新或重排，不能复用请求前的数组下标。
-    if (task?.id) deletedDocumentIds.add(task.id);
-    tasks.value = tasks.value.filter(item => item.fileMd5 !== fileMd5);
-    data.value = data.value.filter(item => item.fileMd5 !== fileMd5);
-    window.$message?.success('删除成功');
+    window.$message?.success('删除任务已提交');
     return true;
   } finally {
     deletingFiles.value.delete(fileMd5);

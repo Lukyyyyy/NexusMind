@@ -877,7 +877,8 @@ public class HybridSearchService {
             // Old content-MD5 keys with multiple owners cannot identify one document safely.
             List<SearchResult> safe = results.stream()
                     .filter(r -> byKey.containsKey(r.getFileMd5()) && byKey.get(r.getFileMd5()).size() == 1
-                            && !byKey.get(r.getFileMd5()).get(0).isLegacyShared())
+                            && !byKey.get(r.getFileMd5()).get(0).isLegacyShared()
+                            && !byKey.get(r.getFileMd5()).get(0).isDeletionPending())
                     .toList();
             safe.forEach(r -> r.setFileName(byKey.get(r.getFileMd5()).get(0).getFileName()));
             return safe;
