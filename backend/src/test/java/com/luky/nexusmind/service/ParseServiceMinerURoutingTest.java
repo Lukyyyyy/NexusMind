@@ -72,6 +72,19 @@ class ParseServiceMinerURoutingTest {
                 "所有切片都应使用请求传入的20字符上限");
     }
 
+    @Test
+    void utf8MarkdownTreeCharactersArePreserved() throws Exception {
+        String content = "Project\n├── backend/\n│   └── src/\n└── frontend/";
+
+        parseService.parseAndSave("md5-tree", new ByteArrayInputStream(content.getBytes(StandardCharsets.UTF_8)),
+                "user", "org", true, ParseEngine.TIKA, "README_EN.md");
+
+        String parsed = savedVectors.stream().map(DocumentVector::getTextContent).reduce("", String::concat);
+        assertTrue(parsed.contains("├──"));
+        assertTrue(parsed.contains("│"));
+        assertTrue(parsed.contains("└──"));
+    }
+
     private DocumentVectorRepository recordingDocumentVectorRepository(List<DocumentVector> savedVectors) {
         return (DocumentVectorRepository) Proxy.newProxyInstance(
                 DocumentVectorRepository.class.getClassLoader(),

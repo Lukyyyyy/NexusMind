@@ -6,6 +6,7 @@ import com.luky.nexusmind.model.ParseEngine;
 import com.luky.nexusmind.repository.DocumentVectorRepository;
 import org.apache.tika.exception.TikaException;
 import org.apache.tika.metadata.Metadata;
+import org.apache.tika.metadata.TikaCoreProperties;
 import org.apache.tika.parser.ParseContext;
 import org.apache.tika.parser.AutoDetectParser;
 import org.apache.tika.sax.BodyContentHandler;
@@ -19,6 +20,7 @@ import org.xml.sax.SAXException;
 import java.io.*;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import com.hankcs.hanlp.seg.common.Term;
 import com.hankcs.hanlp.tokenizer.StandardTokenizer;
 
@@ -26,6 +28,9 @@ import com.hankcs.hanlp.tokenizer.StandardTokenizer;
 public class ParseService {
 
     private static final Logger logger = LoggerFactory.getLogger(ParseService.class);
+    private static final Set<String> UTF8_TEXT_EXTENSIONS = Set.of(
+            "md", "markdown", "txt", "log", "json", "yml", "yaml", "properties", "conf", "config",
+            "java", "js", "ts", "py", "cpp", "c", "h", "css", "scss", "less", "sql");
 
     @Autowired
     private DocumentVectorRepository documentVectorRepository;
@@ -93,11 +98,11 @@ public class ParseService {
         if (engine == ParseEngine.MINERU) {
             return parseWithMinerUAndSave(fileMd5, fileStream, userId, orgTag, isPublic, requestedEngine, fileName, effectiveChunkSize);
         }
-        return parseWithTikaAndSave(fileMd5, fileStream, userId, orgTag, isPublic, effectiveChunkSize);
+        return parseWithTikaAndSave(fileMd5, fileStream, userId, orgTag, isPublic, fileName, effectiveChunkSize);
     }
 
     private int parseWithTikaAndSave(String fileMd5, InputStream fileStream,
-            String userId, String orgTag, boolean isPublic, int effectiveChunkSize) throws IOException, TikaException {
+            String userId, String orgTag, boolean isPublic, String fileName, int effectiveChunkSize) throws IOException, TikaException {
         logger.info("开始流式解析文件，fileMd5: {}, userId: {}, orgTag: {}, isPublic: {}",
                 fileMd5, userId, orgTag, isPublic);
 
@@ -112,7 +117,7 @@ public class ParseService {
         try (BufferedInputStream bufferedStream = new BufferedInputStream(fileStream, bufferSize)) {
             // 创建一个流式处理器，它会在内部处理父块的切分和子块的保存
             StreamingContentHandler handler = new StreamingContentHandler(fileMd5, userId, orgTag, isPublic, effectiveChunkSize);
-            Metadata metadata = new Metadata();
+            Metadata metadata = tikaMetadata(fileName);
             ParseContext context = new ParseContext();
             AutoDetectParser parser = new AutoDetectParser();
 
@@ -173,7 +178,7 @@ public class ParseService {
             if (shouldFallbackMinerUToTika(requestedEngine)) {
                 logger.warn("MinerU解析失败，AUTO策略将回退到Tika，fileMd5: {}, fileName: {}, reason: {}",
                         fileMd5, fileName, e.getMessage());
-                return parseWithTikaAndSave(fileMd5, new ByteArrayInputStream(fileBytes), userId, orgTag, isPublic, effectiveChunkSize);
+                return parseWithTikaAndSave(fileMd5, new ByteArrayInputStream(fileBytes), userId, orgTag, isPublic, fileName, effectiveChunkSize);
             }
             if (e instanceof IOException ioException) {
                 throw ioException;
@@ -239,6 +244,19 @@ public class ParseService {
             return "";
         }
         return fileName.substring(dotIndex + 1).toLowerCase();
+    }
+
+    static Metadata tikaMetadata(String fileName) {
+        Metadata metadata = new Metadata();
+        if (fileName == null) return metadata;
+
+        metadata.set(TikaCoreProperties.RESOURCE_NAME_KEY, fileName);
+        int dotIndex = fileName.lastIndexOf('.');
+        String extension = dotIndex < 0 ? "" : fileName.substring(dotIndex + 1).toLowerCase();
+        if (UTF8_TEXT_EXTENSIONS.contains(extension)) {
+            metadata.set(TikaCoreProperties.CONTENT_TYPE_USER_OVERRIDE, "text/plain; charset=UTF-8");
+        }
+        return metadata;
     }
 
     /**

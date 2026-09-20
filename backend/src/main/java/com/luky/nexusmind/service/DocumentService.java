@@ -510,7 +510,7 @@ public class DocumentService {
             if (isPreviewableFile) {
                 try (InputStream inputStream = openMergedByMd5(fileMd5, fileName)) {
 
-                    String result = extractPreviewText(inputStream);
+                    String result = extractPreviewText(inputStream, fileName);
                     if (result.isBlank()) {
                         return "未提取到可预览文本内容，请下载后查看。";
                     }
@@ -549,10 +549,10 @@ public class DocumentService {
         }
     }
 
-    private String extractPreviewText(InputStream inputStream) throws Exception {
+    private String extractPreviewText(InputStream inputStream, String fileName) throws Exception {
         AutoDetectParser parser = new AutoDetectParser();
         BodyContentHandler handler = new BodyContentHandler(MAX_PREVIEW_CHARS);
-        Metadata metadata = new Metadata();
+        Metadata metadata = ParseService.tikaMetadata(fileName);
         ParseContext context = new ParseContext();
 
         try {
