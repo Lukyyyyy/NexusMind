@@ -9,6 +9,19 @@ export const useKnowledgeBaseStore = defineStore(SetupStoreId.KnowledgeBase, () 
   const tasks = ref<Api.KnowledgeBase.UploadTask[]>([]);
   const activeUploads = ref<Set<string>>(new Set());
   const cancelledTasks = new WeakSet<Api.KnowledgeBase.UploadTask>();
+  const inFlightChunkBytes = new WeakMap<Api.KnowledgeBase.UploadTask, Map<number, number>>();
+
+  function chunkBytes(task: Api.KnowledgeBase.UploadTask, chunkIndex: number) {
+    return Math.max(0, Math.min(chunkSize, task.totalSize - chunkIndex * chunkSize));
+  }
+
+  function updateUploadProgress(task: Api.KnowledgeBase.UploadTask) {
+    const completedBytes = task.uploadedChunks.reduce((total, index) => total + chunkBytes(task, index), 0);
+    const uploadingBytes = [...(inFlightChunkBytes.get(task)?.entries() ?? [])]
+      .filter(([index]) => !task.uploadedChunks.includes(index))
+      .reduce((total, [, bytes]) => total + bytes, 0);
+    task.progress = Number.parseFloat((Math.min(1, (completedBytes + uploadingBytes) / task.totalSize) * 100).toFixed(2));
+  }
 
   function cancelUpload(fileMd5: string) {
     const task = tasks.value.find(item => item.fileMd5 === fileMd5);
@@ -20,11 +33,17 @@ export const useKnowledgeBaseStore = defineStore(SetupStoreId.KnowledgeBase, () 
 
   async function uploadChunk(task: Api.KnowledgeBase.UploadTask, chunkIndex: number): Promise<boolean> {
     if (cancelledTasks.has(task)) return false;
-    const totalChunks = Math.ceil(task.totalSize / chunkSize);
 
     const chunkStart = chunkIndex * chunkSize;
     const chunkEnd = Math.min(chunkStart + chunkSize, task.totalSize);
     const chunk = task.file.slice(chunkStart, chunkEnd);
+
+    let uploadingChunks = inFlightChunkBytes.get(task);
+    if (!uploadingChunks) {
+      uploadingChunks = new Map();
+      inFlightChunkBytes.set(task, uploadingChunks);
+    }
+    uploadingChunks.set(chunkIndex, 0);
 
     const requestId = nanoid();
     task.requestIds ??= [];
@@ -50,19 +69,29 @@ export const useKnowledgeBaseStore = defineStore(SetupStoreId.KnowledgeBase, () 
         'Content-Type': 'multipart/form-data',
         [REQUEST_ID_KEY]: requestId
       },
+      onUploadProgress(event) {
+        if (cancelledTasks.has(task)) return;
+        const fraction = event.total ? event.loaded / event.total : 0;
+        uploadingChunks.set(chunkIndex, Math.min(chunk.size, chunk.size * fraction));
+        updateUploadProgress(task);
+      },
       timeout: 10 * 60 * 1000
     });
 
     task.requestIds = task.requestIds.filter(id => id !== requestId);
+    uploadingChunks.delete(chunkIndex);
 
-    if (error || cancelledTasks.has(task)) return false;
+    if (error || cancelledTasks.has(task)) {
+      updateUploadProgress(task);
+      return false;
+    }
 
     // 更新任务状态
     const updatedTask = tasks.value.find(t => t.fileMd5 === task.fileMd5);
     if (!updatedTask) return false;
     const uploadedChunkSet = new Set([...updatedTask.uploadedChunks, ...data.uploaded]);
     updatedTask.uploadedChunks = [...uploadedChunkSet].sort((a, b) => a - b);
-    updatedTask.progress = Number.parseFloat(((updatedTask.uploadedChunks.length / totalChunks) * 100).toFixed(2));
+    updateUploadProgress(updatedTask);
 
     return true;
   }
