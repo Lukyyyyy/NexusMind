@@ -148,7 +148,7 @@ parse_args() {
   fi
   if [[ "$ACTION" == "deploy" ]]; then
     case "$TARGET" in
-      backend) TOTAL_STEPS=6 ;;
+      backend) TOTAL_STEPS=7 ;;
       frontend)
         TOTAL_STEPS=6
         if [[ -z "$DEPLOY_WEB_IMAGE" ]]; then
@@ -156,7 +156,7 @@ parse_args() {
         fi
         ;;
       all)
-        TOTAL_STEPS=8
+        TOTAL_STEPS=9
         if [[ -z "$DEPLOY_WEB_IMAGE" ]]; then
           TOTAL_STEPS=$((TOTAL_STEPS + 1))
         fi
@@ -392,6 +392,14 @@ switch_to_ref() {
   wait_for_healthy "$service" || return 1
 }
 
+ensure_kafka_topics() {
+  stage_start "校验 Kafka 必需主题"
+  # kafka-init 是一次性容器；增量部署必须显式重跑，不能复用历史 Exited 容器。
+  "${COMPOSE[@]}" run --rm --no-deps kafka-init
+  ok "Kafka 必需主题已就绪"
+  stage_done
+}
+
 deploy_service() {
   local service="$1" candidate label
   if [[ "$service" == "backend" ]]; then
@@ -557,6 +565,7 @@ run_deploy() {
     fi
   fi
   save_live_versions
+  selected backend && ensure_kafka_topics
   selected backend && deploy_service backend
   selected frontend && deploy_service frontend
   cleanup_selected_images

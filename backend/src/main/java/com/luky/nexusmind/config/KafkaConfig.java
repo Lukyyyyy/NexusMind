@@ -3,6 +3,7 @@ package com.luky.nexusmind.config;
 import com.luky.nexusmind.model.FileProcessingTask;
 import com.luky.nexusmind.service.FileProcessingStatusService;
 import com.luky.nexusmind.service.MinerUParseClient;
+import org.apache.kafka.clients.admin.NewTopic;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.common.serialization.StringDeserializer;
@@ -10,6 +11,7 @@ import org.apache.kafka.common.serialization.StringSerializer;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.kafka.config.TopicBuilder;
 import org.springframework.kafka.core.*;
 import org.springframework.kafka.support.serializer.JsonDeserializer;
 import org.springframework.kafka.support.serializer.JsonSerializer;
@@ -83,6 +85,9 @@ public class KafkaConfig {
         config.put(ProducerConfig.ACKS_CONFIG, "all"); // 全部 ISR 落盘才确认
         config.put(ProducerConfig.ENABLE_IDEMPOTENCE_CONFIG, true); // 幂等生产者
         config.put(ProducerConfig.RETRIES_CONFIG, 3); // 自动重试 3 次
+        config.put(ProducerConfig.MAX_BLOCK_MS_CONFIG, 5000);
+        config.put(ProducerConfig.REQUEST_TIMEOUT_MS_CONFIG, 5000);
+        config.put(ProducerConfig.DELIVERY_TIMEOUT_MS_CONFIG, 15000);
 
         DefaultKafkaProducerFactory<String, Object> factory = new DefaultKafkaProducerFactory<>(config);
         // 设置事务前缀，启用事务能力
@@ -93,6 +98,22 @@ public class KafkaConfig {
     @Bean
     public KafkaTemplate<String, Object> kafkaTemplate() {
         return new KafkaTemplate<>(producerFactory());
+    }
+
+    /** 应用启动时幂等补齐必需主题，避免增量部署遗漏一次性 kafka-init。 */
+    @Bean
+    public NewTopic fileProcessingTopicDeclaration() {
+        return TopicBuilder.name(fileProcessingTopic).partitions(1).replicas(1).build();
+    }
+
+    @Bean
+    public NewTopic documentDeletionTopicDeclaration() {
+        return TopicBuilder.name(documentDeletionTopic).partitions(1).replicas(1).build();
+    }
+
+    @Bean
+    public NewTopic fileProcessingDltTopicDeclaration() {
+        return TopicBuilder.name(fileProcessingDltTopic).partitions(1).replicas(1).build();
     }
 
     @Bean
