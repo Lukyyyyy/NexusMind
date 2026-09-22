@@ -184,6 +184,7 @@ export const useKnowledgeBaseStore = defineStore(SetupStoreId.KnowledgeBase, () 
       uploadedChunks: [],
       progress: 0,
       status: UploadStatus.Pending,
+      createdAt: new Date().toISOString(),
       orgTag: form.orgTag
     };
 
