@@ -127,6 +127,31 @@ class FileTaskControlTest {
         assertEquals(0, jdbc.queryForObject("select count(*) from results", Integer.class));
     }
 
+
+    @Test void concurrentUploadWritesShareGenerationLock() throws Exception {
+        long generation = control.uploadGeneration("md5", "owner");
+        CountDownLatch entered = new CountDownLatch(2);
+        CountDownLatch release = new CountDownLatch(1);
+
+        Callable<Void> writer = () -> {
+            try (var scope = control.open("md5", "owner", generation, null)) {
+                FileTaskControl.write(() -> {
+                    entered.countDown();
+                    try { assertTrue(release.await(2, TimeUnit.SECONDS)); }
+                    catch (InterruptedException e) { throw new RuntimeException(e); }
+                });
+            }
+            return null;
+        };
+
+        Future<Void> first = executor.submit(writer);
+        Future<Void> second = executor.submit(writer);
+        assertTrue(entered.await(2, TimeUnit.SECONDS));
+        release.countDown();
+        first.get(2, TimeUnit.SECONDS);
+        second.get(2, TimeUnit.SECONDS);
+    }
+
     @Test void anotherInstanceSeesDeletionAndStaleAttemptIsRejected() {
         var task = new FileProcessingTask("md5", "path", "file.pdf", "owner", "default", true);
         task.setAttemptId("old");

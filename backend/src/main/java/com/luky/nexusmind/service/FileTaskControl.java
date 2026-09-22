@@ -102,6 +102,11 @@ public class FileTaskControl {
         return jdbc.queryForObject("select generation,deleting from file_task_generation where file_md5=? and user_id=?"
                 + (lock ? " for update" : ""), (rs, row) -> new State(rs.getLong(1), rs.getBoolean(2)), md5, owner);
     }
+    private State sharedState(String md5, String owner) {
+        return jdbc.queryForObject("select generation,deleting from file_task_generation where file_md5=? and user_id=? for share",
+                (rs, row) -> new State(rs.getLong(1), rs.getBoolean(2)), md5, owner);
+    }
+
 
     private void validate(Scope scope, boolean lock) {
         if (deletingHere.contains(scope.owner + ":" + scope.md5)) throw new Cancelled();
@@ -113,6 +118,16 @@ public class FileTaskControl {
             if (status.filter(s -> Objects.equals(s.getAttemptId(), scope.task.getAttemptId())).isEmpty()) throw new Cancelled();
         }
     }
+    private void validateWrite(Scope scope) {
+        if (deletingHere.contains(scope.owner + ":" + scope.md5)) throw new Cancelled();
+        State state = sharedState(scope.md5, scope.owner);
+        if (state.deleting || state.generation != scope.generation) throw new Cancelled();
+        if (scope.task != null) {
+            var status = statuses.findByFileMd5AndUserIdForUpdate(scope.md5, scope.owner);
+            if (status.filter(s -> Objects.equals(s.getAttemptId(), scope.task.getAttemptId())).isEmpty()) throw new Cancelled();
+        }
+    }
+
 
     public static void check() {
         Scope scope = CURRENT.get();
@@ -132,7 +147,7 @@ public class FileTaskControl {
         Scope scope = CURRENT.get();
         if (scope == null) return action.get();
         return scope.control.tx.execute(ignored -> {
-            scope.control.validate(scope, true);
+            scope.control.validateWrite(scope);
             return action.get();
         });
     }
