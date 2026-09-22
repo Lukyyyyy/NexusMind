@@ -19,7 +19,6 @@ import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 class DocumentIdentityUploadTest {
-    private static final String MD5 = "d41d8cd98f00b204e9800998ecf8427e";
     private static final String SHA = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
     @Test
@@ -34,7 +33,7 @@ class DocumentIdentityUploadTest {
         var files = mock(FileUploadRepository.class);
         var existing = new FileUpload();
         existing.setStatus(1);
-        when(files.findDuplicate("alice", "team-a", SHA, MD5)).thenReturn(Optional.of(existing));
+        when(files.findDuplicate("alice", "team-a", SHA, null)).thenReturn(Optional.of(existing));
         var control = mock(FileTaskControl.class);
         var users = mock(UserService.class);
         when(users.validateUploadOrgTag("alice", "team-a")).thenReturn("team-a");
@@ -45,7 +44,7 @@ class DocumentIdentityUploadTest {
         ReflectionTestUtils.setField(controller, "taskControl", control);
         ReflectionTestUtils.setField(controller, "userService", users);
 
-        var response = controller.uploadGeneration(MD5, SHA, "team-a", "alice");
+        var response = controller.uploadGeneration(null, SHA, "team-a", "alice");
         assertEquals(HttpStatus.CONFLICT, response.getStatusCode());
         verifyNoInteractions(control);
     }

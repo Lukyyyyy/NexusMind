@@ -44,10 +44,9 @@ public class ChunkInfo {
     private int chunkIndex;
 
     /**
-     * 分块的MD5值
-     * 每个分块的唯一标识，用于校验分块的完整性和正确性
+     * 历史分片 MD5，仅为兼容存量记录保留；新上传依赖整文件 SHA-256 校验。
      */
-    @Column(name = "chunk_md5", nullable = false, length = 32)
+    @Column(name = "chunk_md5", length = 32)
     private String chunkMd5;
 
     /**

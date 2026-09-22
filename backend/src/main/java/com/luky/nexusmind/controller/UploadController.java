@@ -89,17 +89,18 @@ public class UploadController {
     private com.luky.nexusmind.service.FileTaskControl taskControl;
 
     @GetMapping("/generation")
-    public ResponseEntity<?> uploadGeneration(@RequestParam String fileMd5,
+    public ResponseEntity<?> uploadGeneration(@RequestParam(required = false) String fileMd5,
                                               @RequestParam String contentSha256,
                                               @RequestParam(required = false) String orgTag,
                                               @RequestAttribute("userId") String userId) {
         try {
             if (orgTag == null || orgTag.isBlank()) orgTag = userService.getUserPrimaryOrg(userId);
             orgTag = userService.validateUploadOrgTag(userId, orgTag);
-            String checksum = fileMd5.toLowerCase(java.util.Locale.ROOT);
+            String checksum = fileMd5 == null ? null : fileMd5.toLowerCase(java.util.Locale.ROOT);
             String sha256 = contentSha256.toLowerCase(java.util.Locale.ROOT);
             String documentKey = com.luky.nexusmind.service.DocumentIdentity.key(userId, orgTag, sha256);
-            if (!checksum.matches("[a-f0-9]{32}")) return errorResponse(HttpStatus.BAD_REQUEST, "文件摘要无效");
+            if (checksum != null && !checksum.matches("[a-f0-9]{32}"))
+                return errorResponse(HttpStatus.BAD_REQUEST, "文件摘要无效");
             Optional<FileUpload> duplicate = fileUploadRepository.findDuplicate(userId, orgTag, sha256, checksum);
             if (duplicate.isPresent()) {
                 if (duplicate.get().isDeletionPending()) {
@@ -146,7 +147,7 @@ public class UploadController {
     @PostMapping("/chunk")
     public ResponseEntity<Map<String, Object>> uploadChunk(
             @RequestParam("fileMd5") String fileMd5,
-            @RequestParam("contentMd5") String contentMd5,
+            @RequestParam(value = "contentMd5", required = false) String contentMd5,
             @RequestParam("contentSha256") String contentSha256,
             @RequestParam("chunkIndex") int chunkIndex,
             @RequestParam("totalSize") long totalSize,

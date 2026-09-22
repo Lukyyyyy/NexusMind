@@ -40,6 +40,8 @@ public interface FileUploadRepository extends JpaRepository<FileUpload, Long> {
                                        @Param("orgTag") String orgTag,
                                        @Param("sha256") String sha256,
                                        @Param("checksum") String checksum);
+    List<FileUpload> findByContentSha256IsNullAndDeletionPendingFalse();
+
     
     Optional<FileUpload> findByFileNameAndIsPublicTrue(String fileName);
     List<FileUpload> findAllByFileNameAndIsPublicTrue(String fileName);

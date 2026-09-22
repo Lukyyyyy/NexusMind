@@ -80,7 +80,7 @@ public class UploadService {
                            Long graphPromptTemplateId,
                            String userId) throws IOException {
         requireFileMd5(fileMd5);
-        if (contentMd5 == null || !contentMd5.matches("[a-fA-F0-9]{32}")
+        if ((contentMd5 != null && !contentMd5.matches("[a-fA-F0-9]{32}"))
                 || contentSha256 == null || !contentSha256.matches("[a-fA-F0-9]{64}")) {
             throw new IllegalArgumentException("文件内容摘要无效");
         }
@@ -121,7 +121,7 @@ public class UploadService {
                    fileMd5, chunkIndex, totalSize, fileName, fileType, contentType, file.getSize(), orgTag, effectivePublic, userId);
         
         try {
-            String checksum = contentMd5.toLowerCase(java.util.Locale.ROOT);
+            String checksum = contentMd5 == null ? null : contentMd5.toLowerCase(java.util.Locale.ROOT);
             String sha256 = contentSha256.toLowerCase(java.util.Locale.ROOT);
             FileUpload existingUpload = fileUploadRepository.findByFileMd5AndUserId(fileMd5, userId).orElse(null);
             boolean fileExists = existingUpload != null;
@@ -136,13 +136,15 @@ public class UploadService {
             }
 
             if (fileExists) {
+                boolean contentMismatch = existingUpload.getContentSha256() == null
+                        ? checksum == null || !java.util.Objects.equals(existingUpload.getContentMd5(), checksum)
+                        : !existingUpload.getContentSha256().equals(sha256);
+
                 if (existingUpload.isLegacyShared() || existingUpload.getStatus() == 1
                         || !java.util.Objects.equals(existingUpload.getOrgTag(), orgTag)
                         || !java.util.Objects.equals(existingUpload.getFileName(), fileName)
                         || existingUpload.getTotalSize() != totalSize
-                        || !java.util.Objects.equals(existingUpload.getContentMd5(), checksum)
-                        || (existingUpload.getContentSha256() != null
-                            && !existingUpload.getContentSha256().equals(sha256))) {
+                        || contentMismatch) {
                     throw new IllegalArgumentException("上传记录与文件、组织或内容摘要不一致");
                 }
                 if (existingUpload.getContentSha256() == null) {
@@ -212,7 +214,6 @@ public class UploadService {
             logger.debug("检查分片是否已上传 => fileMd5: {}, fileName: {}, chunkIndex: {}, isUploaded: {}", 
                       fileMd5, fileName, chunkIndex, chunkUploaded);
             
-            String chunkMd5 = null;
             String storagePath = null;
             
             if (chunkUploaded) {
@@ -221,9 +222,6 @@ public class UploadService {
                 // 如果分片已上传但数据库中不存在记录，需要创建记录
                 if (!chunkInfoExists) {
                     logger.info("分片已上传但数据库无记录，需要补充分片信息 => fileMd5: {}, fileName: {}, chunkIndex: {}", fileMd5, fileName, chunkIndex);
-                    
-                    // 流式计算分片MD5，避免高并发上传时反复分配大 byte[]
-                    chunkMd5 = DigestUtils.md5Hex(FileTaskControl.stream(file.getInputStream()));
                     
                     // 构建存储路径
                     storagePath = chunkPath(fileMd5, userId, chunkIndex);
@@ -261,11 +259,6 @@ public class UploadService {
             
             // 如果分片未上传或需要重新上传
             if (!chunkUploaded) {
-                // 计算分片的 MD5 值
-                logger.debug("计算分片MD5 => fileMd5: {}, fileName: {}, chunkIndex: {}", fileMd5, fileName, chunkIndex);
-                chunkMd5 = DigestUtils.md5Hex(FileTaskControl.stream(file.getInputStream()));
-                logger.debug("分片MD5计算完成 => fileMd5: {}, fileName: {}, chunkIndex: {}, chunkMd5: {}", 
-                           fileMd5, fileName, chunkIndex, chunkMd5);
                            
                 // 构建分片的存储路径
                 storagePath = chunkPath(fileMd5, userId, chunkIndex);
@@ -312,11 +305,11 @@ public class UploadService {
             }
             
             // 不管分片是否已上传，都确保数据库中有分片信息
-            if (chunkMd5 != null && storagePath != null) {
+            if (storagePath != null) {
                 try {
-                    logger.debug("保存分片信息到数据库 => fileMd5: {}, fileName: {}, chunkIndex: {}, chunkMd5: {}, storagePath: {}", 
-                              fileMd5, fileName, chunkIndex, chunkMd5, storagePath);
-                    saveChunkInfo(fileMd5, userId, chunkIndex, chunkMd5, storagePath);
+                    logger.debug("保存分片信息到数据库 => fileMd5: {}, fileName: {}, chunkIndex: {}, storagePath: {}",
+                              fileMd5, fileName, chunkIndex, storagePath);
+                    saveChunkInfo(fileMd5, userId, chunkIndex, storagePath);
                     logger.info("分片信息已保存到数据库 => fileMd5: {}, fileName: {}, chunkIndex: {}", fileMd5, fileName, chunkIndex);
                 } catch (Exception e) {
                     logger.error("保存分片信息到数据库失败 => fileMd5: {}, fileName: {}, chunkIndex: {}, 错误: {}", 
@@ -617,19 +610,17 @@ public class UploadService {
      *
      * @param fileMd5 文件的 MD5 值
      * @param chunkIndex 分片索引
-     * @param chunkMd5 分片的 MD5 值
      * @param storagePath 分片的存储路径
      */
-    private void saveChunkInfo(String fileMd5, String userId, int chunkIndex, String chunkMd5, String storagePath) {
-        logger.debug("保存分片信息到数据库 => fileMd5: {}, chunkIndex: {}, chunkMd5: {}, storagePath: {}", 
-                   fileMd5, chunkIndex, chunkMd5, storagePath);
+    private void saveChunkInfo(String fileMd5, String userId, int chunkIndex, String storagePath) {
+        logger.debug("保存分片信息到数据库 => fileMd5: {}, chunkIndex: {}, storagePath: {}",
+                   fileMd5, chunkIndex, storagePath);
         try {
             ChunkInfo chunkInfo = chunkInfoRepository.findByFileMd5AndUserIdAndChunkIndex(fileMd5, userId, chunkIndex)
                     .orElseGet(ChunkInfo::new);
             chunkInfo.setFileMd5(fileMd5);
             chunkInfo.setUserId(userId);
             chunkInfo.setChunkIndex(chunkIndex);
-            chunkInfo.setChunkMd5(chunkMd5);
             chunkInfo.setStoragePath(storagePath);
             
             chunkInfoRepository.save(chunkInfo);
@@ -767,13 +758,12 @@ public class UploadService {
                 }
                 logger.info("分片合并成功 => fileMd5: {}, fileName: {}, fileType: {}, mergedPath: {}", fileMd5, fileName, fileType, mergedPath);
                 
-                // 先验证私有暂存对象，不能让请求中的 MD5 直接决定共享对象的内容。
+                // 验证私有暂存对象的大小和 SHA-256，再发布到最终对象路径。
                 StatObjectResponse stat;
                 try {
                     stat = minioClient.statObject(StatObjectArgs.builder()
                             .bucket(minioBucketName).object(pendingPath).build());
                     if (stat.size() != upload.getTotalSize()
-                            || !upload.getContentMd5().equalsIgnoreCase(contentDigest(pendingPath, false))
                             || !upload.getContentSha256().equalsIgnoreCase(contentDigest(pendingPath, true))) {
                         throw new IllegalArgumentException("合并文件的大小或摘要与上传记录不一致");
                     }

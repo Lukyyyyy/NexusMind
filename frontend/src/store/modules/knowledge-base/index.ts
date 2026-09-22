@@ -1,5 +1,6 @@
 import { REQUEST_ID_KEY } from '~/packages/axios/src';
 import { nanoid } from '~/packages/utils/src';
+import { calculateSHA256 } from '@/utils/common';
 
 const maxChunkUploadsPerFile = 3;
 
@@ -34,7 +35,7 @@ export const useKnowledgeBaseStore = defineStore(SetupStoreId.KnowledgeBase, () 
       data: {
         file: chunk,
         fileMd5: task.fileMd5,
-        contentMd5: task.contentMd5 ?? task.fileMd5,
+        ...(task.contentMd5 ? { contentMd5: task.contentMd5 } : {}),
         contentSha256: task.contentSha256,
         uploadGeneration: task.uploadGeneration,
         chunkIndex,
@@ -106,15 +107,11 @@ export const useKnowledgeBaseStore = defineStore(SetupStoreId.KnowledgeBase, () 
   async function enqueueUpload(form: Api.KnowledgeBase.Form) {
     // 获取文件列表中的第一个文件
     const file = form.fileList![0].file!;
-    // 计算文件的MD5值，用于唯一标识文件
-    const md5 = await calculateMD5(file);
-    const sha256 = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', await file.arrayBuffer())))
-      .map(value => value.toString(16).padStart(2, '0'))
-      .join('');
+    const sha256 = await calculateSHA256(file);
 
     // 检查是否已存在相同文件
     const ownerId = authStore.userInfo.id ? String(authStore.userInfo.id) : undefined;
-    const existingTask = tasks.value.find(t => (t.contentSha256 === sha256 || (!t.contentSha256 && (t.contentMd5 ?? t.fileMd5) === md5))
+    const existingTask = tasks.value.find(t => t.contentSha256 === sha256
       && t.orgTag === form.orgTag && t.userId === ownerId);
     if (existingTask) {
       // 如果存在相同文件，直接返回该上传任务
@@ -132,7 +129,7 @@ export const useKnowledgeBaseStore = defineStore(SetupStoreId.KnowledgeBase, () 
     }
 
     const { data: generationData, error: generationError } = await request<{ generation: number; fileMd5: string }>({
-      url: '/upload/generation', params: { fileMd5: md5, contentSha256: sha256, orgTag: form.orgTag }
+      url: '/upload/generation', params: { contentSha256: sha256, orgTag: form.orgTag }
     });
     if (generationError) return;
 
@@ -142,7 +139,6 @@ export const useKnowledgeBaseStore = defineStore(SetupStoreId.KnowledgeBase, () 
       chunk: null,
       chunkIndex: 0,
       fileMd5: generationData.fileMd5,
-      contentMd5: md5,
       contentSha256: sha256,
       uploadGeneration: generationData.generation,
       fileName: file.name,
@@ -194,11 +190,12 @@ export const useKnowledgeBaseStore = defineStore(SetupStoreId.KnowledgeBase, () 
 
     try {
       if (task.uploadGeneration === undefined) {
-        task.contentMd5 ??= await calculateMD5(task.file);
-        task.contentSha256 ??= Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', await task.file.arrayBuffer())))
-          .map(value => value.toString(16).padStart(2, '0')).join('');
+        task.contentSha256 ??= await calculateSHA256(task.file);
         const { data, error } = await request<{ generation: number; fileMd5: string }>({
-          url: '/upload/generation', params: { fileMd5: task.contentMd5, contentSha256: task.contentSha256, orgTag: task.orgTag }
+          url: '/upload/generation', params: {
+            contentSha256: task.contentSha256, orgTag: task.orgTag,
+            ...(task.contentMd5 ? { fileMd5: task.contentMd5 } : {})
+          }
         });
         if (error || cancelledTasks.has(task)) return;
         if (data.fileMd5 !== task.fileMd5) throw new Error('上传记录与文件不匹配');

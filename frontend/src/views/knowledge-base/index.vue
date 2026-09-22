@@ -9,6 +9,7 @@ import SvgIcon from '@/components/custom/svg-icon.vue';
 import FilePreview from '@/components/custom/file-preview.vue';
 import { getToken } from '@/store/modules/auth/shared';
 import { getServiceBaseURL } from '@/utils/service';
+import { calculateSHA256 } from '@/utils/common';
 import UploadDialog from './modules/upload-dialog.vue';
 import SearchDialog from './modules/search-dialog.vue';
 import ChunkDialog from './modules/chunk-dialog.vue';
@@ -966,8 +967,10 @@ async function onBeforeUpload(
   options: { file: UploadFileInfo; fileList: UploadFileInfo[] },
   row: Api.KnowledgeBase.UploadTask
 ) {
-  const md5 = await calculateMD5(options.file.file!);
-  if (md5 !== (row.contentMd5 ?? row.fileMd5)) {
+  const matches = row.contentSha256
+    ? await calculateSHA256(options.file.file!) === row.contentSha256
+    : await calculateMD5(options.file.file!) === (row.contentMd5 ?? row.fileMd5);
+  if (!matches) {
     window.$message?.error('两次上传的文件不一致');
     return false;
   }
