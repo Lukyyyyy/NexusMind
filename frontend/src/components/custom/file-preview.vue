@@ -13,7 +13,7 @@
         </div>
       </template>
       <template v-else-if="isPdfFile && previewUrl">
-        <embed class="pdf-preview-frame" :src="pdfViewerUrl" type="application/pdf" />
+        <iframe class="pdf-preview-frame" :src="pdfViewerUrl" :title="`${fileName} PDF 预览`"></iframe>
       </template>
       <template v-else>
         <div class="content-wrapper">
