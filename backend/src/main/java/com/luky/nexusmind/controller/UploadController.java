@@ -102,6 +102,9 @@ public class UploadController {
             if (!checksum.matches("[a-f0-9]{32}")) return errorResponse(HttpStatus.BAD_REQUEST, "文件摘要无效");
             Optional<FileUpload> duplicate = fileUploadRepository.findDuplicate(userId, orgTag, sha256, checksum);
             if (duplicate.isPresent()) {
+                if (duplicate.get().isDeletionPending()) {
+                    return errorResponse(HttpStatus.CONFLICT, "文件正在删除，请稍后重新上传");
+                }
                 if (duplicate.get().isLegacyShared()) {
                     return errorResponse(HttpStatus.CONFLICT, "旧文档索引存在共享风险，请删除后重新上传");
                 }

@@ -127,6 +127,10 @@ public class UploadService {
             boolean fileExists = existingUpload != null;
             logger.debug("检查文件记录是否存在 => fileMd5: {}, fileName: {}, fileType: {}, exists: {}", fileMd5, fileName, fileType, fileExists);
 
+            if (fileExists && existingUpload.isDeletionPending()) {
+                throw new IllegalArgumentException("文件正在删除，请稍后重新上传");
+            }
+
             if (fileUploadRepository.countByFileMd5(fileMd5) > 1) {
                 throw new IllegalArgumentException("旧文档标识存在多位所有者，请删除后重新上传");
             }
@@ -149,7 +153,11 @@ public class UploadService {
                 if (!DocumentIdentity.key(userId, orgTag, sha256).equals(fileMd5)) {
                     throw new IllegalArgumentException("文档标识与归属不一致");
                 }
-                if (fileUploadRepository.findDuplicate(userId, orgTag, sha256, checksum).isPresent()) {
+                Optional<FileUpload> duplicate = fileUploadRepository.findDuplicate(userId, orgTag, sha256, checksum);
+                if (duplicate.isPresent()) {
+                    if (duplicate.get().isDeletionPending()) {
+                        throw new IllegalArgumentException("文件正在删除，请稍后重新上传");
+                    }
                     throw new IllegalArgumentException("该组织中已存在此文件");
                 }
             }

@@ -66,13 +66,28 @@ public class FileTaskControl {
         } finally { deletingHere.remove(key); }
     }
 
+
+    /**
+     * 与调用方的数据库事务一起提交删除代次。
+     * 用于可靠删除入队：事务回滚时，取消标记和发件箱记录必须一起回滚。
+     */
+    public void beginDeleteTransactionally(String md5, String owner) {
+        ensure(md5, owner);
+        state(md5, owner, true);
+        jdbc.update("update file_task_generation set generation=generation+1, deleting=true "
+                + "where file_md5=? and user_id=?", md5, owner);
+    }
+
     public void lockDeletion(String md5, String owner) { state(md5, owner, true); }
 
     public void finishDelete(String md5, String owner) {
         jdbc.update("update file_task_generation set deleting=false where file_md5=? and user_id=?", md5, owner);
     }
 
-    /** The delete request rolled back before Kafka could own the cleanup. */
+    /**
+     * 兼容旧调用：仅在删除请求事务未提交时撤销删除标记。
+     * 新的 Outbox 流程与 deletion_pending 同事务提交，正常路径不再调用此方法。
+     */
     public void abortDelete(String md5, String owner) {
         freshTx.executeWithoutResult(ignored ->
                 jdbc.update("update file_task_generation set deleting=false where file_md5=? and user_id=?", md5, owner));

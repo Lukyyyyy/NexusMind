@@ -620,7 +620,7 @@ async function handleDelete(fileMd5: string): Promise<boolean> {
       return false;
     }
 
-    window.$message?.success('删除任务已提交');
+    window.$message?.success('删除任务已提交，清理完成后可重新上传');
     return true;
   } finally {
     deletingFiles.value.delete(fileMd5);
