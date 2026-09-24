@@ -86,6 +86,8 @@ class KnowledgeGraphExtractionClientTest {
         assertEquals(1, result.relations().size());
         assertEquals("A", result.relations().get(0).subject().name());
         assertEquals(1, requests.size());
+        assertTrue(requests.get(0).path("messages").path(0).path("content").asText()
+                .contains("只输出 valueScore 不低于 0.6 的关系"));
     }
 
     @ParameterizedTest

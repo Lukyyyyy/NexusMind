@@ -64,7 +64,7 @@ const emptyForm = (): Api.ModelConfig.Request => ({
   temperature: 0.3,
   topP: 0.9,
   maxTokens: 16,
-  maxToolCalls: 6,
+  maxToolCalls: 10,
   dimension: 2048,
   batchSize: 10,
   maxConcurrency: 10,
@@ -190,7 +190,7 @@ const columns: DataTableColumns<Api.ModelConfig.Item> = [
     minWidth: 190,
     render: row =>
       row.modelType === 'LLM'
-        ? `temp ${row.temperature ?? '-'} / top_p ${row.topP ?? '-'} / max ${row.maxTokens == null ? '-' : row.maxTokens / 1024 + 'k'} / 工具 ${row.maxToolCalls ?? 6}`
+        ? `temp ${row.temperature ?? '-'} / top_p ${row.topP ?? '-'} / max ${row.maxTokens == null ? '-' : row.maxTokens / 1024 + 'k'} / 工具 ${row.maxToolCalls ?? 10}`
         : row.modelType === 'EMBEDDING'
           ? `维度 ${row.dimension ?? 2048} / batch ${row.batchSize ?? '-'} / 并发 ${row.maxConcurrency ?? '-'}`
           : `窗口 ${row.topN ?? '全局 30'}${row.fps != null ? ` / fps ${row.fps}` : ''}${
@@ -368,7 +368,7 @@ function openEdit(row: Api.ModelConfig.Item) {
     temperature: row.temperature,
     topP: row.topP,
     maxTokens: row.maxTokens == null ? 16 : row.maxTokens / 1024,
-    maxToolCalls: row.maxToolCalls ?? 6,
+    maxToolCalls: row.maxToolCalls ?? 10,
     dimension: row.dimension ?? 2048,
     batchSize: row.batchSize,
     maxConcurrency: row.maxConcurrency ?? 10,
