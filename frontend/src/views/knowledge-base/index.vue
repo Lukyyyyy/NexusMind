@@ -70,7 +70,7 @@ function apiFn(params: KnowledgeBaseListParams) {
 function renderIcon(fileName: string) {
   const ext = getFileExt(fileName);
   if (ext) {
-    if (uploadAccept.split(',').includes(`.${ext}`)) return <SvgIcon localIcon={ext} class="text-44px" />;
+    if (['pdf', 'doc', 'docx', 'txt'].includes(ext)) return <SvgIcon localIcon={ext} class="text-44px" />;
     return <SvgIcon localIcon="dflt" class="text-44px" />;
   }
   return null;
