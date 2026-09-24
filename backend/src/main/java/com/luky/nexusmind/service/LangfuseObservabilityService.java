@@ -35,7 +35,7 @@ public class LangfuseObservabilityService {
 
     private static final Logger logger = LoggerFactory.getLogger(LangfuseObservabilityService.class);
 
-    static final String OBSERVATION_FIELDS = "core,basic,model,usage,metrics,trace_context";
+    static final String OBSERVATION_FIELDS = "core,basic,model,usage,metrics,trace_context,metadata";
 
     /** 详情查询需要内容与属性：io=input/output，metadata=span 属性（省略 fields 时 Langfuse 只返回 core+basic） */
     static final String DETAIL_OBSERVATION_FIELDS = "core,basic,time,io,metadata,model,usage,metrics,trace_context";
@@ -242,7 +242,7 @@ public class LangfuseObservabilityService {
                                                 String cursor,
                                                 int limit,
                                                 String fields) {
-            return new LangfuseObservationQuery(userId, null, from, to, level, traceName, cursor, limit, fields, false);
+            return new LangfuseObservationQuery(userId, null, from, to, level, traceName, cursor, limit, fields, true);
         }
 
         static LangfuseObservationQuery forTrace(String userId,

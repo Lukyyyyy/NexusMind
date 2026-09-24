@@ -366,14 +366,25 @@ onMounted(() => {
 
     <NGrid cols="1 l:3" :x-gap="16" :y-gap="16" responsive="screen" class="shrink-0">
       <NGi span="1 l:2">
-        <NCard title="调用趋势" :bordered="false" size="small" class="h-220px">
-          <div v-if="overview?.trend?.length" class="trend-chart">
-            <div v-for="item in overview.trend" :key="item.time" class="trend-item">
-              <div class="trend-bar-wrap">
-                <div class="trend-bar" :style="{ height: `${Math.max(8, (item.count / trendMax) * 150)}px` }" />
-                <div v-if="item.errorCount" class="trend-error" />
+        <NCard title="每小时步骤数" :bordered="false" size="small" class="h-220px">
+          <template #header-extra>
+            <span class="trend-hint">仅显示有数据的小时 · 红线表示有错误</span>
+          </template>
+          <div v-if="overview?.trend?.length">
+            <div class="trend-chart">
+              <div
+                v-for="item in overview.trend"
+                :key="item.time"
+                class="trend-item"
+                :title="`${dayjs(item.time).format('YYYY-MM-DD HH:00')}：${item.count} 个步骤，${item.errorCount} 个错误`"
+              >
+                <div class="trend-bar-wrap">
+                  <div class="trend-value">{{ item.count }} 步</div>
+                  <div class="trend-bar" :style="{ height: `${Math.max(8, (item.count / trendMax) * 96)}px` }" />
+                  <div v-if="item.errorCount" class="trend-error" />
+                </div>
+                <div class="trend-label">{{ dayjs(item.time).format('MM/DD HH:00') }}</div>
               </div>
-              <div class="trend-label">{{ dayjs(item.time).format('HH:mm') }}</div>
             </div>
           </div>
           <NEmpty v-else description="暂无趋势数据" />
@@ -493,7 +504,7 @@ onMounted(() => {
 }
 
 .trend-chart {
-  height: 160px;
+  height: 150px;
   display: flex;
   align-items: flex-end;
   gap: 8px;
@@ -501,24 +512,36 @@ onMounted(() => {
   padding: 4px 0;
 }
 
+.trend-hint {
+  color: #8a8f99;
+  font-size: 12px;
+}
+
 .trend-item {
-  width: 34px;
-  flex: 0 0 34px;
+  width: 78px;
+  flex: 0 0 78px;
   text-align: center;
 }
 
 .trend-bar-wrap {
-  height: 150px;
+  height: 120px;
   display: flex;
-  align-items: flex-end;
-  justify-content: center;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: center;
   position: relative;
+}
+
+.trend-value {
+  margin-bottom: 4px;
+  font-size: 12px;
+  line-height: 16px;
 }
 
 .trend-bar {
   width: 16px;
   border-radius: 4px 4px 0 0;
-  background: var(--primary-color);
+  background: rgb(var(--primary-color));
   opacity: 0.85;
 }
 
@@ -532,7 +555,7 @@ onMounted(() => {
 }
 
 .trend-label {
-  margin-top: 6px;
+  margin-top: 4px;
   color: #8a8f99;
   font-size: 11px;
 }

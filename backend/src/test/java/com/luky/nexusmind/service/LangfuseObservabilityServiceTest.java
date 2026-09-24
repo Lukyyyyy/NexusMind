@@ -55,7 +55,8 @@ class LangfuseObservabilityServiceTest {
 
         assertTrue(overview.enabled());
         assertEquals("alice", client.lastUserId);
-        assertEquals("core,basic,model,usage,metrics,trace_context", client.lastFields);
+        assertEquals("core,basic,model,usage,metrics,trace_context,metadata", client.lastFields);
+        assertTrue(client.lastExpandMetadata);
         assertEquals(2, overview.totalTraces());
         assertEquals(3, overview.totalObservations());
         assertEquals(1, overview.errorCount());
@@ -136,6 +137,12 @@ class LangfuseObservabilityServiceTest {
         assertEquals("deepseek-chat", row.modelName());
         assertEquals(20, row.totalTokens());
         assertEquals(0.00002, row.totalCost(), 0.000001);
+
+        LangfuseObservabilityService.OverviewResponse overview = service.getOverview("alice", FROM, TO);
+        assertTrue(client.lastExpandMetadata);
+        assertEquals("deepseek-chat", overview.byModel().get(0).model());
+        assertEquals("deepseek-chat", service.getTraces("alice", FROM, TO, null, null, null, 100)
+                .items().get(0).modelNames().get(0));
     }
 
     private static LangfuseObservabilityService.LangfuseObservation observation(String traceId,
@@ -174,6 +181,7 @@ class LangfuseObservabilityServiceTest {
         private String lastUserId;
         private String lastTraceId;
         private String lastFields;
+        private boolean lastExpandMetadata;
 
         @Override
         public LangfuseObservabilityService.LangfuseObservationPage fetchObservations(
@@ -181,6 +189,7 @@ class LangfuseObservabilityServiceTest {
             this.lastUserId = query.userId();
             this.lastTraceId = query.traceId();
             this.lastFields = query.fields();
+            this.lastExpandMetadata = query.expandMetadata();
             return response;
         }
     }
