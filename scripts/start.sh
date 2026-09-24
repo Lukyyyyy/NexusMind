@@ -18,6 +18,7 @@ EOF
 load_env() {
   # shellcheck source=lib/env.sh
   source "$ROOT/scripts/lib/env.sh" "$ROOT"
+  LOCAL_ES_HOME="${ELASTICSEARCH_HOME:-$HOME/.local/nexusmind/elasticsearch-8.10.4}"
 }
 
 start_docker_infra() {
@@ -94,19 +95,15 @@ wait_for_command() {
   done
 }
 
-ensure_elasticsearch_service_config() {
-  local plist="$HOME/Library/LaunchAgents/homebrew.mxcl.elasticsearch-full.plist"
-  local config="/opt/homebrew/etc/elasticsearch/elasticsearch.yml"
-  local java_home="/Library/Java/JavaVirtualMachines/temurin-17.jdk/Contents/Home"
-
-  if [[ -f "$config" ]] && ! grep -q '^xpack\.ml\.enabled:' "$config"; then
-    printf '\n# NexusMind local development: ML native code is not required.\nxpack.ml.enabled: false\n' >> "$config"
-  fi
-  if [[ -f "$plist" ]]; then
-    /usr/libexec/PlistBuddy -c "Add :EnvironmentVariables dict" "$plist" 2>/dev/null || true
-    /usr/libexec/PlistBuddy -c "Set :EnvironmentVariables:ES_JAVA_HOME $java_home" "$plist" 2>/dev/null ||
-      /usr/libexec/PlistBuddy -c "Add :EnvironmentVariables:ES_JAVA_HOME string $java_home" "$plist" 2>/dev/null || true
-  fi
+check_elasticsearch_version() {
+  local version
+  version="$(curl -fsS "http://localhost:${ELASTICSEARCH_PORT:-9200}/" |
+    python3 -c 'import json,sys; print(json.load(sys.stdin)["version"]["number"])')" || return 1
+  [[ "$version" == 8.10.4 ]] || {
+    echo "Elasticsearch 需要 8.10.4，当前为 $version。" >&2
+    return 1
+  }
+  echo "Elasticsearch $version 已就绪（端口 ${ELASTICSEARCH_PORT:-9200}）"
 }
 
 start_homebrew_infra() {
@@ -131,16 +128,18 @@ start_homebrew_infra() {
   brew services start kafka
   brew services start minio
   brew services start neo4j
-  brew services start elastic/tap/elasticsearch-full
-  ensure_elasticsearch_service_config
-
-  local uid
-  uid="$(id -u)"
-  local plist="$HOME/Library/LaunchAgents/homebrew.mxcl.elasticsearch-full.plist"
-  if [[ -f "$plist" ]]; then
-    launchctl bootout "gui/$uid" "$plist" 2>/dev/null || true
-    launchctl bootstrap "gui/$uid" "$plist" 2>/dev/null || true
-    launchctl kickstart -k "gui/$uid/homebrew.mxcl.elasticsearch-full" 2>/dev/null || true
+  [[ -x "$LOCAL_ES_HOME/bin/elasticsearch" ]] || {
+    echo "缺少 Elasticsearch 8.10.4：$LOCAL_ES_HOME" >&2
+    return 1
+  }
+  if ! lsof -nP -iTCP:"${ELASTICSEARCH_PORT:-9200}" -sTCP:LISTEN >/dev/null 2>&1; then
+    local es_plist="$HOME/Library/LaunchAgents/com.nexusmind.elasticsearch.plist"
+    if [[ -f "$es_plist" ]]; then
+      launchctl bootstrap "gui/$(id -u)" "$es_plist" 2>/dev/null ||
+        launchctl kickstart -k "gui/$(id -u)/com.nexusmind.elasticsearch"
+    else
+      "$LOCAL_ES_HOME/bin/elasticsearch" -d -p "$LOCAL_ES_HOME/elasticsearch.pid"
+    fi
   fi
 
   wait_for_port "MySQL" "${MYSQL_PORT:-3306}" 60
@@ -149,6 +148,7 @@ start_homebrew_infra() {
   wait_for_port "MinIO" "${MINIO_API_PORT:-9000}" 60
   wait_for_port "Neo4j" "${NEO4J_BOLT_HOST_PORT:-7687}" 90
   wait_for_command "Elasticsearch" 120 curl -fsS "http://localhost:${ELASTICSEARCH_PORT:-9200}"
+  check_elasticsearch_version
 
   redis-cli ping >/dev/null 2>&1 && export REDIS_PASSWORD=""
   MYSQL_PWD="${MYSQL_PASSWORD:-}" mysql -u"${MYSQL_USERNAME:-root}" \
@@ -164,7 +164,11 @@ start_homebrew_infra() {
 
 stop_homebrew_infra() {
   echo "Stopping local infrastructure services..."
-  brew services stop elastic/tap/elasticsearch-full || true
+  if [[ -f "$HOME/Library/LaunchAgents/com.nexusmind.elasticsearch.plist" ]]; then
+    launchctl bootout "gui/$(id -u)/com.nexusmind.elasticsearch" 2>/dev/null || true
+  elif [[ -f "$LOCAL_ES_HOME/elasticsearch.pid" ]]; then
+    pkill -F "$LOCAL_ES_HOME/elasticsearch.pid" 2>/dev/null || true
+  fi
   brew services stop kafka || true
   brew services stop minio || true
   brew services stop neo4j || true
@@ -297,6 +301,7 @@ start_dev() {
       check_port "Redis" "${REDIS_PORT:-6379}"
       check_port "Kafka" "${KAFKA_PORT:-9092}"
       check_port "Elasticsearch" "${ELASTICSEARCH_PORT:-9200}"
+      check_elasticsearch_version
       check_port "MinIO" "${MINIO_API_PORT:-9000}"
       check_port "Neo4j" "${NEO4J_BOLT_HOST_PORT:-7687}"
       ;;

@@ -129,6 +129,8 @@ EMBEDDING_API_KEY=your-embedding-key
 ./scripts/start.sh frontend
 ```
 
+Homebrew 启动方式使用独立安装的 Elasticsearch 8.10.4（默认路径 `~/.local/nexusmind/elasticsearch-8.10.4`，可用 `ELASTICSEARCH_HOME` 指定），其他中间件仍由 Homebrew 管理。启动脚本会检查实际连接的 ES 版本，避免误连 7.x。
+
 完整参数可运行 `./scripts/start.sh --help` 查看。
 
 ## 配置说明
