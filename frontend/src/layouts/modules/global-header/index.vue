@@ -3,7 +3,6 @@ import { useFullscreen } from '@vueuse/core';
 import { useAppStore } from '@/store/modules/app';
 import { useThemeStore } from '@/store/modules/theme';
 import GlobalBreadcrumb from '../global-breadcrumb/index.vue';
-import GlobalSearch from '../global-search/index.vue';
 import ThemeButton from './components/theme-button.vue';
 import UserAvatar from './components/user-avatar.vue';
 import NotificationCenter from './components/notification-center.vue';
@@ -61,7 +60,6 @@ const isDev = import.meta.env.DEV;
     </div>
 -->
     <div class="h-full flex-y-center justify-end gap-2px">
-      <GlobalSearch />
       <FullScreen v-if="!appStore.isMobile" :full="isFullscreen" @click="toggle" />
       <LangSwitch
         v-if="themeStore.header.multilingual.visible"

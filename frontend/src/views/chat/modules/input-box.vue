@@ -341,6 +341,7 @@ onUnmounted(() => {
     </div>
 
     <NScrollbar
+      v-if="displayMessages.length || loading"
       ref="scrollbarRef"
       class="min-h-0 flex-1"
       :content-style="scrollbarContentStyle"
@@ -354,20 +355,18 @@ onUnmounted(() => {
             <ChatMessage v-else :msg="item" />
           </template>
         </VueMarkdownItProvider>
-        <section v-if="!displayMessages.length && !loading" class="chat-empty">
-          <div class="chat-empty__icon"><icon-solar:chat-round-line-duotone /></div>
-          <h1>你好，欢迎使用知枢 NexusMind</h1>
-          <p></p>
-<!--          <p>从知识库中检索信息，获得有依据的回答</p>-->
-          <div class="chat-empty__suggestions">
-            <button v-for="suggestion in suggestions" :key="suggestion" type="button" @click="useSuggestion(suggestion)">
-              <span>{{ suggestion }}</span>
-              <icon-material-symbols:arrow-forward-rounded />
-            </button>
-          </div>
-        </section>
       </NSpin>
     </NScrollbar>
+    <section v-else class="chat-empty" :style="{ paddingBottom: `${inputDockHeight}px` }">
+      <div class="chat-empty__icon"><icon-solar:chat-round-line-duotone /></div>
+      <h1>你好，欢迎使用知枢 NexusMind</h1>
+      <div class="chat-empty__suggestions">
+        <button v-for="suggestion in suggestions" :key="suggestion" type="button" @click="useSuggestion(suggestion)">
+          <span>{{ suggestion }}</span>
+          <icon-material-symbols:arrow-forward-rounded />
+        </button>
+      </div>
+    </section>
 
     <div
       ref="inputDockRef"
@@ -662,11 +661,14 @@ onUnmounted(() => {
 .chat-empty {
   display: flex;
   width: min(100%, 620px);
-  min-height: calc(100vh - 350px);
+  min-height: 0;
+  flex: 1;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
+  justify-content: safe center;
   margin: 0 auto;
+  overflow-y: auto;
+  padding-inline: 28px;
   color: #162033;
   text-align: center;
 }
@@ -685,8 +687,7 @@ onUnmounted(() => {
 }
 
 .chat-empty h1 { margin: 0; font-size: 24px; font-weight: 700; letter-spacing: -0.02em; }
-.chat-empty > p { margin: 9px 0 24px; color: #7b8798; font-size: 14px; }
-.chat-empty__suggestions { display: grid; width: min(100%, 560px); gap: 9px; }
+.chat-empty__suggestions { display: grid; width: min(100%, 560px); gap: 9px; margin-top: 32px; }
 .chat-empty__suggestions button {
   display: flex;
   min-height: 48px;
@@ -753,7 +754,7 @@ onUnmounted(() => {
     max-width: 120px;
   }
 
-  .chat-empty { min-height: calc(100vh - 330px); padding-inline: 8px; }
+  .chat-empty { padding-inline: 8px; }
   .chat-empty h1 { font-size: 20px; }
 }
 </style>
