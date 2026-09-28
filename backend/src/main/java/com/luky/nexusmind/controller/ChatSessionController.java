@@ -56,6 +56,24 @@ public class ChatSessionController {
         return ok("获取会话列表成功", data);
     }
 
+    @GetMapping("/archived")
+    public ResponseEntity<?> listArchivedSessions(@RequestHeader("Authorization") String token) {
+        return ok("获取已归档会话成功", chatSessionService.listArchivedSessions(username(token))
+                .stream().map(this::sessionData).toList());
+    }
+
+    @PostMapping("/{sessionId}/archive")
+    public ResponseEntity<?> archiveSession(@RequestHeader("Authorization") String token,
+                                            @PathVariable Long sessionId) {
+        return ok("会话已归档", sessionData(chatSessionService.setArchived(username(token), sessionId, true)));
+    }
+
+    @PostMapping("/{sessionId}/restore")
+    public ResponseEntity<?> restoreSession(@RequestHeader("Authorization") String token,
+                                            @PathVariable Long sessionId) {
+        return ok("会话已恢复", sessionData(chatSessionService.setArchived(username(token), sessionId, false)));
+    }
+
     @GetMapping("/{sessionId}/messages")
     public ResponseEntity<?> getMessages(@RequestHeader("Authorization") String token,
                                          @PathVariable Long sessionId) {
@@ -139,6 +157,8 @@ public class ChatSessionController {
         data.put("titleGenerated", session.isTitleGenerated());
         data.put("createdAt", session.getCreatedAt());
         data.put("updatedAt", session.getUpdatedAt());
+        data.put("lastConversationAt", session.getLastConversationAt());
+        data.put("archivedAt", session.getArchivedAt());
         data.put("scope", ChatScopeService.view(session));
         data.put("modelConfigId", session.getLlmConfigId());
         data.put("modelName", session.getLlmModelName());

@@ -72,6 +72,56 @@ class ChatSessionServiceTest {
     }
 
     @Test
+    void archivedSessionsMoveToSeparateListAndRemainReadableUntilRestored() {
+        users.save(user("alice", 1L));
+        users.save(user("bob", 2L));
+        ChatSession session = service.createSession("alice");
+        service.appendCompletedExchange("alice", session.getId(), "问题", "回答", "项目问答");
+        LocalDateTime lastConversationAt = LocalDateTime.of(2026, 9, 20, 10, 30);
+        session.setUpdatedAt(lastConversationAt);
+
+        assertThrows(CustomException.class, () -> service.setArchived("bob", session.getId(), true));
+        ChatSession archived = service.setArchived("alice", session.getId(), true);
+
+        assertTrue(service.listSessions("alice").isEmpty());
+        assertNotNull(archived.getArchivedAt());
+        assertEquals(lastConversationAt, archived.getUpdatedAt());
+        assertEquals(List.of(session.getId()), service.listArchivedSessions("alice").stream().map(ChatSession::getId).toList());
+        assertEquals(2, service.getMessages("alice", session.getId()).size());
+        assertThrows(CustomException.class, () -> service.getOwnedWritableSession("alice", session.getId()));
+
+        ChatSession restored = service.setArchived("alice", session.getId(), false);
+        assertNull(restored.getArchivedAt());
+        assertEquals(lastConversationAt, restored.getUpdatedAt());
+        assertTrue(service.listArchivedSessions("alice").isEmpty());
+        assertEquals(List.of(session.getId()), service.listSessions("alice").stream().map(ChatSession::getId).toList());
+    }
+
+    @Test
+    void restoredSessionsSortByLastConversationRatherThanLaterSessionEdits() {
+        users.save(user("alice", 1L));
+        ChatSession older = service.createSession("alice");
+        ChatSession newer = service.createSession("alice");
+        service.appendCompletedExchange("alice", older.getId(), "旧问题", "旧回答", "旧会话");
+        service.appendCompletedExchange("alice", newer.getId(), "新问题", "新回答", "新会话标题");
+        LocalDateTime olderMessageAt = LocalDateTime.of(2026, 8, 25, 22, 59);
+        LocalDateTime newerMessageAt = LocalDateTime.of(2026, 9, 3, 19, 34);
+        messages.rows.forEach(message -> message.setCreatedAt(
+                message.getSession().getId().equals(older.getId()) ? olderMessageAt : newerMessageAt));
+        older.setUpdatedAt(LocalDateTime.of(2026, 9, 23, 12, 0));
+        newer.setUpdatedAt(newerMessageAt);
+
+        service.setArchived("alice", older.getId(), true);
+        ChatSession restored = service.setArchived("alice", older.getId(), false);
+
+        assertEquals(olderMessageAt, restored.getLastConversationAt());
+        List<ChatSession> history = service.listSessions("alice");
+        assertEquals(List.of(newer.getId(), older.getId()), history.stream().map(ChatSession::getId).toList());
+        assertEquals(olderMessageAt, history.get(1).getLastConversationAt());
+        assertEquals(LocalDateTime.of(2026, 9, 23, 12, 0), history.get(1).getUpdatedAt());
+    }
+
+    @Test
     void renameSessionRejectsBlankTitleAndUpdatesOwnedSession() {
         users.save(user("alice", 1L));
         ChatSession session = service.createSession("alice");
@@ -363,7 +413,9 @@ class ChatSessionServiceTest {
             return ChatSessionServiceTest.proxy(ChatSessionRepository.class, (proxy, method, args) -> switch (method.getName()) {
                 case "save" -> save((ChatSession) args[0]);
                 case "findHistoryByUsername" -> list((String) args[0]);
+                case "findArchivedByUsername" -> listArchived((String) args[0]);
                 case "findByIdAndUserUsernameAndDeletedAtIsNull" -> findActive((Long) args[0], (String) args[1]);
+                case "setArchivedAt" -> setArchivedAt((Long) args[0], (LocalDateTime) args[1]);
                 case "setFallbackTitleIfDefault" -> setFallbackTitleIfDefault(
                         (Long) args[0], (String) args[1]);
                 case "setGeneratedTitleIfPending" -> setGeneratedTitleIfPending(
@@ -389,8 +441,20 @@ class ChatSessionServiceTest {
             return byId.values().stream()
                     .filter(session -> username.equals(session.getUser().getUsername()))
                     .filter(session -> session.getDeletedAt() == null)
+                    .filter(session -> session.getArchivedAt() == null)
                     .filter(session -> messages.exists(session.getId()))
-                    .sorted(Comparator.comparing(ChatSession::getUpdatedAt).reversed())
+                    .peek(session -> session.setLastConversationAt(messages.lastConversationAt(session.getId())))
+                    .sorted(Comparator.comparing(ChatSession::getLastConversationAt,
+                            Comparator.nullsLast(Comparator.reverseOrder())))
+                    .toList();
+        }
+
+        List<ChatSession> listArchived(String username) {
+            return byId.values().stream()
+                    .filter(session -> username.equals(session.getUser().getUsername()))
+                    .filter(session -> session.getDeletedAt() == null && session.getArchivedAt() != null)
+                    .peek(session -> session.setLastConversationAt(messages.lastConversationAt(session.getId())))
+                    .sorted(Comparator.comparing(ChatSession::getArchivedAt).reversed())
                     .toList();
         }
 
@@ -399,11 +463,18 @@ class ChatSessionServiceTest {
                     .filter(session -> session.getId().equals(id))
                     .filter(session -> username.equals(session.getUser().getUsername()))
                     .filter(session -> session.getDeletedAt() == null)
+                    .peek(session -> session.setLastConversationAt(messages.lastConversationAt(session.getId())))
                     .findFirst();
         }
 
         Optional<ChatSession> findRaw(Long id) {
             return Optional.ofNullable(byId.get(id));
+        }
+
+        int setArchivedAt(Long id, LocalDateTime archivedAt) {
+            Optional<ChatSession> session = findRaw(id).filter(item -> item.getDeletedAt() == null);
+            session.ifPresent(item -> item.setArchivedAt(archivedAt));
+            return session.isPresent() ? 1 : 0;
         }
 
         int setFallbackTitleIfDefault(Long id, String title) {
@@ -476,6 +547,15 @@ class ChatSessionServiceTest {
 
         boolean exists(Long sessionId) {
             return rows.stream().anyMatch(message -> message.getSession().getId().equals(sessionId));
+        }
+
+        LocalDateTime lastConversationAt(Long sessionId) {
+            return rows.stream()
+                    .filter(message -> message.getSession().getId().equals(sessionId))
+                    .filter(message -> List.of("user", "assistant").contains(message.getRole()))
+                    .map(ChatMessage::getCreatedAt)
+                    .max(LocalDateTime::compareTo)
+                    .orElse(null);
         }
     }
 

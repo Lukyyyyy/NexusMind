@@ -5,10 +5,12 @@ defineOptions({
 
 const chatStore = useChatStore();
 const appStore = useAppStore();
-const { sessions, activeSessionId, sessionLoading } = storeToRefs(chatStore);
+const { sessions, archivedSessions, activeSessionId, sessionLoading, generatingSessionId } = storeToRefs(chatStore);
 
 const editingId = ref<number | null>(null);
 const editingTitle = ref('');
+const listView = ref<'history' | 'archived'>('history');
+const visibleSessions = computed(() => listView.value === 'history' ? sessions.value : archivedSessions.value);
 const collapsedStorageKey = 'nexusmind-chat-panel-collapsed';
 const collapsed = ref(
   appStore.isMobile || (typeof window !== 'undefined' && window.localStorage.getItem(collapsedStorageKey) === 'true')
@@ -23,7 +25,8 @@ function formatSessionTime(timestamp: string) {
 }
 
 function setTitleScrollDuration(event: MouseEvent) {
-  const title = (event.currentTarget as HTMLElement).querySelector<HTMLElement>('.chat-list__session-title')!;
+  const title = (event.currentTarget as HTMLElement).querySelector<HTMLElement>('.chat-list__session-title');
+  if (!title) return;
   title.style.setProperty('--title-scroll-duration', `${Math.max(0, title.scrollWidth - title.clientWidth) / 40}s`);
 }
 
@@ -35,6 +38,12 @@ watch(
   { immediate: true }
 );
 
+watch(() => chatStore.activeSession, session => {
+  if (session && !session.archivedAt && sessions.value.some(item => item.id === session.id)) {
+    listView.value = 'history';
+  }
+});
+
 function toggleCollapsed() {
   collapsed.value = !collapsed.value;
   window.localStorage.setItem(collapsedStorageKey, String(collapsed.value));
@@ -42,6 +51,7 @@ function toggleCollapsed() {
 }
 
 async function handleCreate() {
+  listView.value = 'history';
   await chatStore.createSession();
 }
 
@@ -79,6 +89,24 @@ async function handleDelete(sessionId: number) {
     }
   });
 }
+
+async function handleArchive(sessionId: number) {
+  if (generatingSessionId.value === sessionId) return;
+  if (await chatStore.setArchived(sessionId, true)) window.$message?.success('会话已归档');
+}
+
+async function handleRestore(sessionId: number) {
+  if (!await chatStore.setArchived(sessionId, false)) return;
+  listView.value = 'history';
+  await chatStore.selectSession(sessionId);
+  window.$message?.success('会话已恢复');
+}
+
+function handleAction(action: string, session: Api.Chat.Session) {
+  if (action === 'rename') startRename(session);
+  else if (action === 'archive') void handleArchive(session.id);
+  else if (action === 'delete') void handleDelete(session.id);
+}
 </script>
 
 <template>
@@ -101,22 +129,42 @@ async function handleDelete(sessionId: number) {
         <template #icon><icon-material-symbols:add-rounded /></template>
         新建会话
       </NButton>
-      <div class="chat-list__heading">
-        <NText strong>历史会话</NText>
-        <span>{{ sessions.length }}</span>
+      <div class="chat-list__tabs" role="tablist" aria-label="会话列表">
+        <button
+          type="button"
+          role="tab"
+          :aria-selected="listView === 'history'"
+          :class="{ 'is-selected': listView === 'history' }"
+          @click="listView = 'history'; editingId = null"
+        >
+          历史会话 <span>{{ sessions.length }}</span>
+        </button>
+        <button
+          type="button"
+          role="tab"
+          :aria-selected="listView === 'archived'"
+          :class="{ 'is-selected': listView === 'archived' }"
+          @click="listView = 'archived'; editingId = null"
+        >
+          已归档 <span>{{ archivedSessions.length }}</span>
+        </button>
       </div>
     </div>
 
     <NSpin v-if="!collapsed" :show="sessionLoading" class="chat-list__spin" content-class="chat-list__spin-content">
       <NScrollbar class="chat-list__scroll">
         <div class="chat-list__sessions">
-          <button
-            v-for="session in sessions"
+          <div
+            v-for="session in visibleSessions"
             :key="session.id"
-            type="button"
             class="chat-list__session group"
             :class="{ 'is-active': activeSessionId === session.id }"
+            role="button"
+            tabindex="0"
+            :aria-label="session.title"
             @click="handleSelect(session.id)"
+            @keydown.enter.self.prevent="handleSelect(session.id)"
+            @keydown.space.self.prevent="handleSelect(session.id)"
             @mouseenter="setTitleScrollDuration"
           >
             <div v-if="editingId === session.id" class="flex items-center gap-1">
@@ -138,32 +186,36 @@ async function handleDelete(sessionId: number) {
               <span class="chat-list__session-title" :title="session.title">
                 <NText class="chat-list__session-title-text">{{ session.title }}</NText>
               </span>
-              <time>{{ formatSessionTime(session.updatedAt) }}</time>
-              <NButton
-                size="tiny"
-                quaternary
-                circle
-                class="opacity-0 group-hover:opacity-100"
-                @click.stop="startRename(session)"
-              >
-                <template #icon>
-                  <icon-material-symbols:edit-outline />
+              <time>{{ formatSessionTime(session.lastConversationAt || session.updatedAt) }}</time>
+              <NTooltip v-if="listView === 'archived'" placement="top">
+                <template #trigger>
+                  <NButton size="tiny" quaternary circle aria-label="恢复会话" @click.stop="handleRestore(session.id)">
+                    <template #icon><icon-material-symbols:unarchive-outline /></template>
+                  </NButton>
                 </template>
-              </NButton>
-              <NButton
-                size="tiny"
-                quaternary
-                circle
-                class="opacity-0 group-hover:opacity-100"
-                @click.stop="handleDelete(session.id)"
+                恢复会话
+              </NTooltip>
+              <NDropdown
+                v-else
+                trigger="click"
+                :options="[
+                  { label: '重命名', key: 'rename' },
+                  { label: '归档', key: 'archive', disabled: generatingSessionId === session.id },
+                  { label: '删除', key: 'delete' }
+                ]"
+                @select="key => handleAction(String(key), session)"
               >
-                <template #icon>
-                  <icon-material-symbols:delete-outline />
-                </template>
-              </NButton>
+                <NButton size="tiny" quaternary circle aria-label="会话操作" @click.stop>
+                  <template #icon><icon-material-symbols:more-horiz /></template>
+                </NButton>
+              </NDropdown>
             </div>
-          </button>
-          <NEmpty v-if="!sessions.length" description="暂无会话" class="mt-20" />
+          </div>
+          <NEmpty
+            v-if="!visibleSessions.length"
+            :description="listView === 'archived' ? '暂无已归档会话' : '暂无会话'"
+            class="mt-20"
+          />
         </div>
       </NScrollbar>
     </NSpin>
@@ -215,17 +267,36 @@ async function handleDelete(sessionId: number) {
   font-size: 14px;
 }
 
-.chat-list__heading {
+.chat-list__tabs {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-top: 20px;
-  padding: 0 8px 8px;
-  color: #667085;
-  font-size: 12px;
+  gap: 3px;
+  margin-top: 14px;
+  border-bottom: 1px solid #e9edf3;
 }
 
-.chat-list__heading span {
+.chat-list__tabs button {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  padding: 10px 0 9px;
+  color: #7b8798;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.chat-list__tabs button.is-selected {
+  border-bottom-color: #356ae6;
+  color: #245bdb;
+  font-weight: 600;
+}
+
+.chat-list__tabs span {
   color: #98a2b3;
   font-variant-numeric: tabular-nums;
 }
@@ -239,10 +310,12 @@ async function handleDelete(sessionId: number) {
   background: transparent;
   padding: 10px;
   text-align: left;
+  cursor: pointer;
   transition: 150ms ease;
 }
 
 .chat-list__session:hover { background: #f4f6f9; }
+.chat-list__session:focus-visible { outline: 2px solid #356ae6; outline-offset: 2px; }
 .chat-list__session.is-active { border-color: #dbe5ff; background: #eef3ff; }
 .chat-list__session-row { display: flex; min-width: 0; align-items: center; gap: 8px; }
 .chat-list__session-icon { flex: 0 0 auto; color: #8a96a8; font-size: 17px; }
@@ -260,9 +333,7 @@ async function handleDelete(sessionId: number) {
 }
 .chat-list__session.is-active .chat-list__session-icon { color: #356ae6; }
 .chat-list__session time { flex: 0 0 auto; color: #98a2b3; font-size: 11px; font-variant-numeric: tabular-nums; }
-.chat-list__session:hover time { display: none; }
-.chat-list__session .n-button { transition: opacity 120ms ease; }
-.chat-list__session:not(:hover) .n-button { width: 0; margin: 0; overflow: hidden; }
+.chat-list__session .n-button { flex: 0 0 auto; }
 
 .chat-list__toggle {
   position: absolute;
@@ -302,6 +373,7 @@ async function handleDelete(sessionId: number) {
 
 :global(.dark) .chat-list__session:hover { background: #24272d; }
 :global(.dark) .chat-list__session.is-active { border-color: #3c527f; background: #202b40; }
+:global(.dark) .chat-list__tabs { border-bottom-color: #303843; }
 
 @media (prefers-reduced-motion: reduce) {
   .chat-list__session-title-text { transition: none; }

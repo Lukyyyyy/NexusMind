@@ -779,6 +779,8 @@ declare namespace Api {
       titleGenerated: boolean;
       createdAt: string;
       updatedAt: string;
+      lastConversationAt: string | null;
+      archivedAt: string | null;
       scope: ScopeView;
       modelConfigId: number | null;
       modelName: string | null;

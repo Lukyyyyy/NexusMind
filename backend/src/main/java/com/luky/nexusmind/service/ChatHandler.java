@@ -131,7 +131,7 @@ public class ChatHandler {
         if (previous != null) previous.cancel();
         try {
             // 1. 校验并使用显式会话 ID
-            ChatSession chatSession = chatSessionService.getOwnedActiveSession(userId, chatSessionId);
+            ChatSession chatSession = chatSessionService.getOwnedWritableSession(userId, chatSessionId);
             ModelConfigService.ResolvedModelConfig modelConfig = chatSessionService.resolveSessionModel(userId, chatSession);
             List<FileUpload> scopeFiles = chatScopeService == null
                     ? List.of()

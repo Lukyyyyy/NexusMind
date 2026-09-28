@@ -80,7 +80,7 @@ public class ChatSessionService {
     @Transactional
     public ChatSession changeModel(String username, Long sessionId, Long modelConfigId) {
         if (modelConfigService == null) throw new IllegalStateException("模型配置服务不可用");
-        ChatSession session = getOwnedActiveSession(username, sessionId);
+        ChatSession session = getOwnedWritableSession(username, sessionId);
         ModelConfigService.ResolvedModelConfig model = modelConfigService.selectLlmConfig(username, modelConfigId);
         if (java.util.Objects.equals(session.getLlmConfigId(), model.id())) return session;
         boolean started = chatMessageRepository.existsBySessionIdAndRoleIn(sessionId, CONVERSATION_ROLES);
@@ -109,7 +109,7 @@ public class ChatSessionService {
 
     @Transactional
     public ChatSession updateScope(String username, Long sessionId, ChatScopeService.ScopeSelection scope) {
-        ChatSession session = getOwnedActiveSession(username, sessionId);
+        ChatSession session = getOwnedWritableSession(username, sessionId);
         if (chatMessageRepository.existsBySessionIdAndRoleIn(sessionId, CONVERSATION_ROLES)) {
             throw new CustomException("已有消息的会话不能修改问答范围，请创建新会话", HttpStatus.CONFLICT);
         }
@@ -123,6 +123,19 @@ public class ChatSessionService {
     }
 
     @Transactional(readOnly = true)
+    public List<ChatSession> listArchivedSessions(String username) {
+        return chatSessionRepository.findArchivedByUsername(username);
+    }
+
+    @Transactional
+    public ChatSession setArchived(String username, Long sessionId, boolean archived) {
+        ChatSession session = getOwnedActiveSession(username, sessionId);
+        if (archived == (session.getArchivedAt() != null)) return session;
+        chatSessionRepository.setArchivedAt(sessionId, archived ? LocalDateTime.now() : null);
+        return getOwnedActiveSession(username, sessionId);
+    }
+
+    @Transactional(readOnly = true)
     public List<ChatMessage> getMessages(String username, Long sessionId) {
         ChatSession session = getOwnedActiveSession(username, sessionId);
         return chatMessageRepository.findBySessionIdOrderByCreatedAtAsc(session.getId());
@@ -130,7 +143,7 @@ public class ChatSessionService {
 
     @Transactional
     public ChatSession renameSession(String username, Long sessionId, String title) {
-        ChatSession session = getOwnedActiveSession(username, sessionId);
+        ChatSession session = getOwnedWritableSession(username, sessionId);
         String normalizedTitle = normalizeTitle(title);
         session.setTitle(normalizedTitle);
         session.setTitleGenerated(true);
@@ -149,6 +162,15 @@ public class ChatSessionService {
     public ChatSession getOwnedActiveSession(String username, Long sessionId) {
         return chatSessionRepository.findByIdAndUserUsernameAndDeletedAtIsNull(sessionId, username)
                 .orElseThrow(() -> new CustomException("会话不存在或无权访问", HttpStatus.NOT_FOUND));
+    }
+
+    @Transactional(readOnly = true)
+    public ChatSession getOwnedWritableSession(String username, Long sessionId) {
+        ChatSession session = getOwnedActiveSession(username, sessionId);
+        if (session.getArchivedAt() != null) {
+            throw new CustomException("已归档会话需恢复后才能继续对话", HttpStatus.CONFLICT);
+        }
+        return session;
     }
 
     @Transactional(readOnly = true)

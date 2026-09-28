@@ -7,6 +7,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
@@ -17,12 +18,30 @@ public interface ChatSessionRepository extends JpaRepository<ChatSession, Long> 
             select s from ChatSession s
             where s.user.username = :username
               and s.deletedAt is null
+              and s.archivedAt is null
               and s.title <> '新会话'
-            order by s.updatedAt desc
+            order by s.lastConversationAt desc, s.id desc
             """)
     List<ChatSession> findHistoryByUsername(@Param("username") String username);
 
+    @Query("""
+            select s from ChatSession s
+            where s.user.username = :username
+              and s.deletedAt is null
+              and s.archivedAt is not null
+            order by s.archivedAt desc
+            """)
+    List<ChatSession> findArchivedByUsername(@Param("username") String username);
+
     Optional<ChatSession> findByIdAndUserUsernameAndDeletedAtIsNull(Long id, String username);
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+            update ChatSession s
+            set s.archivedAt = :archivedAt
+            where s.id = :id and s.deletedAt is null
+            """)
+    int setArchivedAt(@Param("id") Long id, @Param("archivedAt") LocalDateTime archivedAt);
 
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("""

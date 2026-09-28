@@ -37,9 +37,10 @@ const isSending = computed(() => {
     || (latestMessage.value?.role === 'assistant' && ['loading', 'pending'].includes(latestMessage.value?.status || ''))
   );
 });
+const isArchived = computed(() => activeSession.value?.archivedAt != null);
 
 const sendable = computed(
-  () => stopping.value || (!input.value.message.trim() && !isSending.value) || ['CLOSED', 'CONNECTING'].includes(wsStatus.value)
+  () => isArchived.value || stopping.value || (!input.value.message.trim() && !isSending.value) || ['CLOSED', 'CONNECTING'].includes(wsStatus.value)
 );
 
 const inputRef = ref<HTMLTextAreaElement>();
@@ -70,6 +71,7 @@ const suggestions = [
 let websocketOpened = false;
 
 function useSuggestion(suggestion: string) {
+  if (isArchived.value) return;
   input.value.message = suggestion;
   nextTick(() => inputRef.value?.focus());
 }
@@ -80,7 +82,7 @@ async function loadModels() {
 }
 
 async function switchModel(modelId: number) {
-  if (modelId === activeSession.value?.modelConfigId || switchingModel.value || isSending.value) return;
+  if (isArchived.value || modelId === activeSession.value?.modelConfigId || switchingModel.value || isSending.value) return;
 
   switchingModel.value = true;
   const session = await chatStore.switchSessionModel(modelId);
@@ -197,7 +199,7 @@ function scrollToBottom() {
 }
 
 const handleSend = async () => {
-  if (stopping.value) return;
+  if (stopping.value || isArchived.value) return;
 
   //  判断是否正在发送, 如果发送中，则停止ai继续响应
   if (isSending.value) {
@@ -298,6 +300,8 @@ const handShortcut = (e: KeyboardEvent) => {
   if (e.key === 'Enter') {
     e.preventDefault();
 
+    if (isArchived.value) return;
+
     if (!e.shiftKey && !e.ctrlKey) {
       handleSend();
     } else insertNewline();
@@ -369,7 +373,14 @@ onUnmounted(() => {
       ref="inputDockRef"
       class="chat-input-dock pointer-events-none absolute inset-x-0 bottom-0 z-10 flex flex-col items-center px-4 pb-3 pt-4"
     >
-      <div class="chat-input pointer-events-auto">
+      <div v-if="isArchived" class="chat-archived pointer-events-auto">
+        <span>此会话已归档，恢复后可继续对话</span>
+        <NButton size="small" type="primary" secondary @click="chatStore.setArchived(activeSession!.id, false)">
+          <template #icon><icon-material-symbols:unarchive-outline /></template>
+          恢复会话
+        </NButton>
+      </div>
+      <div v-else class="chat-input pointer-events-auto">
         <textarea
           ref="inputRef"
           v-model="input.message"
@@ -415,7 +426,7 @@ onUnmounted(() => {
           </div>
         </div>
       </div>
-      <p class="pointer-events-none mt-3 text-center text-13px color-#9ca3af dark:color-#6b7280">
+      <p v-if="!isArchived" class="pointer-events-none mt-3 text-center text-13px color-#9ca3af dark:color-#6b7280">
         NexusMind 也可能会犯错。请核查重要信息。
       </p>
     </div>
@@ -472,9 +483,31 @@ onUnmounted(() => {
 }
 
 .chat-input,
+.chat-archived,
 .chat-input-dock > p {
   position: relative;
   z-index: 1;
+}
+
+.chat-archived {
+  display: flex;
+  width: min(100%, 820px);
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border: 1px solid #dbe2ea;
+  border-radius: 12px;
+  background: #fff;
+  padding: 14px 16px;
+  color: #667085;
+  font-size: 13px;
+  box-shadow: 0 8px 24px rgb(15 23 42 / 7%);
+}
+
+:global(.dark) .chat-archived {
+  border-color: #303843;
+  background: #18181c;
+  color: #aeb8c7;
 }
 
 .chat-input {

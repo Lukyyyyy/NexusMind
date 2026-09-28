@@ -3,6 +3,7 @@ import { useWebSocket } from '@vueuse/core';
 export const useChatStore = defineStore(SetupStoreId.Chat, () => {
   const input = ref<Api.Chat.Input>({ message: '' });
   const sessions = ref<Api.Chat.Session[]>([]);
+  const archivedSessions = ref<Api.Chat.Session[]>([]);
   const draftSession = ref<Api.Chat.Session | null>(null);
   const activeSessionId = ref<number | null>(null);
   const messages = ref<Api.Chat.Message[]>([]);
@@ -53,7 +54,7 @@ export const useChatStore = defineStore(SetupStoreId.Chat, () => {
   const activeSession = computed(() =>
     draftSession.value?.id === activeSessionId.value
       ? draftSession.value
-      : sessions.value.find(item => item.id === activeSessionId.value) || null
+      : [...sessions.value, ...archivedSessions.value].find(item => item.id === activeSessionId.value) || null
   );
 
   function normalizeMessage(message: Api.Chat.Message): Api.Chat.Message {
@@ -69,9 +70,12 @@ export const useChatStore = defineStore(SetupStoreId.Chat, () => {
     const requestId = ++sessionsRequestId;
     if (showLoading) sessionLoading.value = true;
     try {
-      const { error, data } = await request<Api.Chat.Session[]>({ url: 'chat/sessions' });
-      if (!error && requestId === sessionsRequestId) {
-        const loaded = data || [];
+      const [history, archived] = await Promise.all([
+        request<Api.Chat.Session[]>({ url: 'chat/sessions' }),
+        request<Api.Chat.Session[]>({ url: 'chat/sessions/archived' })
+      ]);
+      if (requestId === sessionsRequestId && !history.error) {
+        const loaded = history.data || [];
         const draft = draftSession.value;
         const draftPersisted = draft && loaded.some(item => item.id === draft.id);
         const draftVisible = draft != null && draft.title !== '新会话' && sessions.value.some(item => item.id === draft.id);
@@ -82,6 +86,7 @@ export const useChatStore = defineStore(SetupStoreId.Chat, () => {
           draftSession.value = null;
         }
       }
+      if (requestId === sessionsRequestId && !archived.error) archivedSessions.value = archived.data || [];
     } finally {
       if (requestId === sessionsRequestId) sessionLoading.value = false;
     }
@@ -192,6 +197,7 @@ export const useChatStore = defineStore(SetupStoreId.Chat, () => {
     if (error) return false;
     if (draftSession.value?.id === sessionId) draftSession.value = null;
     sessions.value = sessions.value.filter(item => item.id !== sessionId);
+    archivedSessions.value = archivedSessions.value.filter(item => item.id !== sessionId);
     if (activeSessionId.value === sessionId) {
       activeSessionId.value = sessions.value[0]?.id || null;
       await loadMessages(activeSessionId.value);
@@ -199,7 +205,31 @@ export const useChatStore = defineStore(SetupStoreId.Chat, () => {
     return true;
   }
 
+  async function setArchived(sessionId: number, archived: boolean) {
+    const { error, data } = await request<Api.Chat.Session>({
+      url: `chat/sessions/${sessionId}/${archived ? 'archive' : 'restore'}`,
+      method: 'post'
+    });
+    if (error) return false;
+    if (draftSession.value?.id === sessionId) draftSession.value = null;
+    sessions.value = sessions.value.filter(item => item.id !== sessionId);
+    archivedSessions.value = archivedSessions.value.filter(item => item.id !== sessionId);
+    if (archived) {
+      archivedSessions.value = [data, ...archivedSessions.value];
+      if (activeSessionId.value === sessionId) {
+        activeSessionId.value = sessions.value[0]?.id || null;
+        await loadMessages(activeSessionId.value);
+      }
+    } else {
+      sessions.value = [data, ...sessions.value].sort((a, b) =>
+        (b.lastConversationAt || b.updatedAt).localeCompare(a.lastConversationAt || a.updatedAt)
+      );
+    }
+    return true;
+  }
+
   async function ensureActiveSession() {
+    if (activeSession.value?.archivedAt) return null;
     if (activeSessionId.value) return activeSessionId.value;
     const created = await createSession();
     return created?.id || null;
@@ -232,6 +262,7 @@ export const useChatStore = defineStore(SetupStoreId.Chat, () => {
   return {
     input,
     sessions,
+    archivedSessions,
     activeSessionId,
     activeSession,
     messages,
@@ -254,6 +285,7 @@ export const useChatStore = defineStore(SetupStoreId.Chat, () => {
     startGeneration,
     applySessionTitle,
     deleteSession,
+    setArchived,
     ensureActiveSession,
     ensureWsTicket,
     refreshActiveSessionMessages
