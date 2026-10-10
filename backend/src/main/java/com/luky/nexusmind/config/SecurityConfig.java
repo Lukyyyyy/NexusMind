@@ -105,7 +105,7 @@ public class SecurityConfig {
                             .referrerPolicy(referrer -> referrer.policy(
                                     org.springframework.security.web.header.writers.ReferrerPolicyHeaderWriter.ReferrerPolicy.NO_REFERRER))
                             .contentSecurityPolicy(csp -> csp.policyDirectives(
-                                    "default-src 'self'; img-src 'self' blob: data:; script-src 'self'; "
+                                    "default-src 'self'; img-src 'self' blob: data:; script-src 'self' 'wasm-unsafe-eval'; "
                                             + "style-src 'self' 'unsafe-inline'; connect-src 'self' wss:; "
                                             + "frame-ancestors 'none'; object-src 'none'; base-uri 'self'")))
                     // 添加JWT认证过滤器
